@@ -127,7 +127,7 @@ const CustomShapeNode = ({ id, data, selected, style }: any) => {
   );
 };
 
-// --- 2. SMART EDGE (Hỗ trợ Edit Text trực tiếp) ---
+// --- 2. SMART EDGE (Xử lý Đè Mũi Tên, Self Loop, Curved & Edit Text) ---
 const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, data }: EdgeProps) => {
   const { setEdges } = useReactFlow();
   const sourceNode = useStore(useCallback((store) => store.nodeInternals.get(source), [source]));
@@ -151,15 +151,16 @@ const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, d
   const sWidth = sourceNode.width || 120; const sHeight = sourceNode.height || 40;
   const tWidth = targetNode.width || 120; const tHeight = targetNode.height || 40;
 
-  // Xử lý Self-Loop
+  // --- SELF-LOOP (Tự nối chính nó bằng Vòng tròn Cubic Bezier) ---
   if (source === target) {
     const labelLength = typeof label === 'string' ? label.length : 0;
     const radiusX = 50 + labelLength * 2.5; 
     const radiusY = 60 + labelLength * 2.5;
     const startX = sourceNode.position.x + sWidth / 2 + 10;
-    const startY = sourceNode.position.y;
+    const startY = sourceNode.position.y; 
     const endX = sourceNode.position.x + sWidth;
     const endY = sourceNode.position.y + sHeight / 2 - 10;
+    
     const c1X = startX + radiusX * 0.5; const c1Y = startY - radiusY;
     const c2X = endX + radiusX; const c2Y = endY - radiusY * 0.5;
 
@@ -171,14 +172,8 @@ const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, d
         <BaseEdge id={id} path={edgePath} style={style} markerEnd={markerEnd} markerStart={markerStart} />
         {label !== undefined && (
           <EdgeLabelRenderer>
-            <div 
-              onDoubleClick={() => setIsEditing(true)}
-              className="nodrag nopan" 
-              style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`, background: 'white', padding: '2px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: 11, fontWeight: 600, color: '#334155', zIndex: 20, pointerEvents: 'all' }}
-            >
-              {isEditing ? (
-                <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={e => e.key === 'Enter' && saveEdit()} className="text-center text-slate-800 bg-transparent outline-none border-b border-blue-400" style={{minWidth: '40px'}} />
-              ) : label}
+            <div onDoubleClick={() => setIsEditing(true)} className="nodrag nopan" style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`, background: 'white', padding: '2px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: 11, fontWeight: 600, color: '#334155', zIndex: 20, pointerEvents: 'all' }}>
+              {isEditing ? <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={e => e.key === 'Enter' && saveEdit()} className="text-center text-slate-800 bg-transparent outline-none border-b border-blue-400" style={{minWidth: '40px'}} /> : label}
             </div>
           </EdgeLabelRenderer>
         )}
@@ -186,6 +181,7 @@ const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, d
     );
   }
 
+  // --- NỐI 2 KHỐI KHÁC NHAU ---
   const sX = sourceNode.position.x + sWidth / 2; const sY = sourceNode.position.y + sHeight / 2;
   const tX = targetNode.position.x + tWidth / 2; const tY = targetNode.position.y + tHeight / 2;
   const dx = tX - sX; const dy = tY - sY;
@@ -205,11 +201,14 @@ const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, d
   let edgePath, labelX, labelY;
 
   if (data?.isCurved) {
+    // 2 chiều cong Elip bằng Vector pháp tuyến
     const mx = (sourceX + targetX) / 2; const my = (sourceY + targetY) / 2;
     const length = Math.sqrt(dx * dx + dy * dy) || 1; 
     const nx = -dy / length; const ny = dx / length;
     const curveOffset = 60; 
     const cx = mx + nx * curveOffset; const cy = my + ny * curveOffset;
+    
+    // Dịch chân cắm 15px để đầu mũi tên tách rời nhau
     const shiftOffset = 15;
     const finalSourceX = sourceX + nx * shiftOffset; const finalSourceY = sourceY + ny * shiftOffset;
     const finalTargetX = targetX + nx * shiftOffset; const finalTargetY = targetY + ny * shiftOffset;
@@ -218,7 +217,23 @@ const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, d
     labelX = 0.25 * finalSourceX + 0.5 * cx + 0.25 * finalTargetX;
     labelY = 0.25 * finalSourceY + 0.5 * cy + 0.25 * finalTargetY;
   } else {
-    [edgePath, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition: sPos, targetX, targetY, targetPosition: tPos, borderRadius: 16 });
+    // Tách đường thẳng đi/đến (Dịch offset vuông góc để tránh chập mũi tên)
+    let sShift = 0; let tShift = 0;
+    if (!data?.bidirectional) {
+      sShift = -8; 
+      tShift = 8;  
+    }
+    
+    let finalSourceX = sourceX, finalSourceY = sourceY;
+    let finalTargetX = targetX, finalTargetY = targetY;
+
+    if (sPos === Position.Right || sPos === Position.Left) {
+      finalSourceY += sShift; finalTargetY += tShift;
+    } else {
+      finalSourceX += sShift; finalTargetX += tShift;
+    }
+
+    [edgePath, labelX, labelY] = getSmoothStepPath({ sourceX: finalSourceX, sourceY: finalSourceY, sourcePosition: sPos, targetX: finalTargetX, targetY: finalTargetY, targetPosition: tPos, borderRadius: 16 });
   }
 
   return (
@@ -226,14 +241,8 @@ const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, d
       <BaseEdge id={id} path={edgePath} style={style} markerEnd={markerEnd} markerStart={markerStart} />
       {label !== undefined && (
         <EdgeLabelRenderer>
-          <div 
-            onDoubleClick={() => setIsEditing(true)}
-            className="nodrag nopan" 
-            style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`, background: 'white', padding: '2px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: 11, fontWeight: 600, color: '#334155', zIndex: 20, pointerEvents: 'all' }}
-          >
-            {isEditing ? (
-                <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={e => e.key === 'Enter' && saveEdit()} className="text-center text-slate-800 bg-transparent outline-none border-b border-blue-400" style={{minWidth: '40px'}} />
-            ) : label}
+          <div onDoubleClick={() => setIsEditing(true)} className="nodrag nopan" style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`, background: 'white', padding: '2px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: 11, fontWeight: 600, color: '#334155', zIndex: 20, pointerEvents: 'all' }}>
+            {isEditing ? <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={e => e.key === 'Enter' && saveEdit()} className="text-center text-slate-800 bg-transparent outline-none border-b border-blue-400" style={{minWidth: '40px'}} /> : label}
           </div>
         </EdgeLabelRenderer>
       )}
@@ -287,7 +296,7 @@ const consolidateEdges = (edges: Edge[]): Edge[] => {
   return consolidated;
 };
 
-// --- 4. STRICT PARSER (Dịch lỗi sang Tiếng Anh) ---
+// --- 4. STRICT PARSER ---
 const parseMermaid = (code: string) => {
   const nodesMap = new Map<string, Node>();
   const edges: Edge[] = [];
@@ -423,7 +432,6 @@ const IDEPageContent = () => {
     if (monacoRef.current) monacoRef.current.monaco.editor.setModelMarkers(monacoRef.current.editor.getModel(), "mermaid", []);
   }, []);
 
-  // Bắt Event từ cả Node và Edge khi sửa chữ
   useEffect(() => {
     const nodeHandler = (e: any) => { updateCodeFromFlow(e.detail.nodes, edges); };
     const edgeHandler = (e: any) => { updateCodeFromFlow(nodes, e.detail.edges); };
@@ -442,7 +450,9 @@ const IDEPageContent = () => {
       setEdges([...parsedData.edges]);
       
       setParseError(null);
-      if (monacoRef.current) monacoRef.current.monaco.editor.setModelMarkers(monacoRef.current.editor.getModel(), "mermaid", []);
+      if (monacoRef.current) {
+        monacoRef.current.monaco.editor.setModelMarkers(monacoRef.current.editor.getModel(), "mermaid", []);
+      }
     } catch (err: any) { 
       setParseError(err);
       setIsTerminalOpen(true);
@@ -452,10 +462,8 @@ const IDEPageContent = () => {
           message: err.message, severity: monacoRef.current.monaco.MarkerSeverity.Error
         }]);
       }
-      alert(`${err.message}\n\nThe system will restore the source code to the last valid Canvas state.`);
-      updateCodeFromFlow(nodes, edges);
     }
-  }, [code, nodes, edges, updateCodeFromFlow]);
+  }, [code]);
 
   useEffect(() => { handleSyncCodeToDiagram(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -476,10 +484,6 @@ const IDEPageContent = () => {
   }, [nodes, edges, updateCodeFromFlow]);
 
   const handleMove = useCallback((event: any, viewport: Viewport) => { setZoomLevel(viewport.zoom); }, []);
-
-  const handleCanvasMouseUp = useCallback(() => {
-    updateCodeFromFlow(nodes, edges);
-  }, [nodes, edges, updateCodeFromFlow]);
 
   const handleCanvasPointerMove = useCallback((e: React.PointerEvent) => {
     if (coordsRef.current && reactFlowWrapper.current) {
@@ -578,6 +582,7 @@ const IDEPageContent = () => {
     return () => { document.removeEventListener("mousemove", handleMouseMove); document.removeEventListener("mouseup", handleMouseUpDrag); document.body.style.userSelect = "auto"; }; 
   }, [isDraggingExplorer, isDraggingEditor, isDraggingRightPanel, handleMouseMove, handleMouseUpDrag]);
 
+  // Hứng sự kiện hover để tạo Tooltip
   const handleShapeMouseEnter = (e: React.MouseEvent, item: any) => {
     const rect = e.currentTarget.getBoundingClientRect();
     hoverTimeout.current = setTimeout(() => {
@@ -649,7 +654,7 @@ const IDEPageContent = () => {
                 {hoveredShape.item.icon}
              </div>
              <div className="font-bold text-[13px]">{hoveredShape.item.label}</div>
-             <div className="text-center text-slate-300 leading-snug">{shapeDescriptions[hoveredShape.item.type]}</div>
+             <div className="text-center text-slate-300 leading-snug">{shapeDescriptions[hoveredShape.item.type] || 'A flowchart shape.'}</div>
           </div>
           <div className="absolute right-[-4px] top-1/2 -translate-y-1/2 w-2 h-2 bg-[#1e293b] transform rotate-45"></div>
         </div>
@@ -748,11 +753,10 @@ const IDEPageContent = () => {
 
             <div className={`absolute top-4 left-4 z-10 px-2 py-1 text-xs font-medium rounded-md shadow border ${theme.border} ${theme.bgMain} ${theme.text}`}>{(zoomLevel * 100).toFixed(0)}%</div>
             
-            <div className="flex-1 w-full h-full" onPointerMove={handleCanvasPointerMove} onMouseUp={handleCanvasMouseUp}>
+            <div className="flex-1 w-full h-full" onPointerMove={handleCanvasPointerMove} onMouseUp={() => updateCodeFromFlow(nodes, edges)}>
               <ReactFlow 
                 nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
                 onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} 
-                onNodeDragStop={onNodeDragStop} 
                 onConnect={onConnect} onMove={handleMove} 
                 onDrop={onDrop} onDragOver={onDragOver} onNodeContextMenu={onNodeContextMenu} 
                 onEdgeContextMenu={onEdgeContextMenu} onPaneClick={closeContextMenu}
