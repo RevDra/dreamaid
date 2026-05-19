@@ -32,14 +32,17 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 import dagre from "dagre";
 import {
-  Play, Search, Folder, FileCode, ChevronDown, ChevronRight, Menu,
-  MoreHorizontal, Sun, Moon, Type, Circle, User, StickyNote,
-  MessageSquare, Box, X, Wand2, PanelLeft, PanelBottom, PanelRight,
+  Folder, FileCode, ChevronDown, ChevronRight,
+  MoreHorizontal, Type, Circle, User, StickyNote,
+  MessageSquare, Box, X,
   Hexagon, Triangle, Database, Cloud, FileText, RotateCw, Upload,
-  Minus, Square, PenTool, Eraser,
-  Save, Share2, FileDown, LogIn, LogOut, PlusCircle, File as FileIcon
+  Minus, Square, PlusCircle, File as FileIcon
 } from "lucide-react";
 import * as api from "../lib/api";
+import CanvasActionBar from "../components/workbench/CanvasActionBar";
+import TopRightCommandBar from "../components/workbench/TopRightCommandBar";
+import WorkspaceTopBar from "../components/workbench/WorkspaceTopBar";
+import type { SaveState, WorkspaceTheme } from "../lib/workspace/action-types";
 
 // --- QUẢN LÝ ẢNH UPLOAD ---
 const globalImageRegistry: Record<string, string> = {};
@@ -554,6 +557,14 @@ const autoLayoutElements = (nodes: Node[], edges: Edge[]) => {
 };
 
 const SHAPE_CATEGORIES = ["Custom", "General", "Flowchart"];
+const DEFAULT_DIAGRAM_TITLE = "Untitled";
+const DEFAULT_MERMAID_CODE = "graph TD;\n    KH[\"Customer\"] %% shape:actor x:100 y:100 w:80 h:80 rot:0\n    BA[\"Business Analyst\"] %% shape:rectangle x:300 y:250 w:120 h:40 rot:0\n\n    KH -->|Send Request| BA;\n";
+
+interface PersistedDiagramSnapshot {
+  id: string | null;
+  title: string;
+  code: string;
+}
 
 // --- NỘI DUNG IDE CHÍNH ---
 const IDEPageContent = () => {
@@ -591,7 +602,7 @@ const IDEPageContent = () => {
   const hoverTimeout = useRef<any>(null);
 
   // Flow State
-  const [code, setCode] = useState<string>("graph TD;\n    KH[\"Customer\"] %% shape:actor x:100 y:100 w:80 h:80 rot:0\n    BA[\"Business Analyst\"] %% shape:rectangle x:300 y:250 w:120 h:40 rot:0\n\n    KH -->|Send Request| BA;\n");
+  const [code, setCode] = useState<string>(DEFAULT_MERMAID_CODE);
 
   // Auth & persistence state
   const [authToken, setAuthToken] = useState<string | null>(() => {
@@ -604,9 +615,11 @@ const IDEPageContent = () => {
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
   const [currentDiagramId, setCurrentDiagramId] = useState<string | null>(null);
-  const [diagramTitle, setDiagramTitle] = useState('Untitled');
+  const [diagramTitle, setDiagramTitle] = useState(DEFAULT_DIAGRAM_TITLE);
   const [diagramList, setDiagramList] = useState<api.DiagramSummary[]>([]);
   const [shareModal, setShareModal] = useState<api.ShareLinkResponse | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [persistedDiagram, setPersistedDiagram] = useState<PersistedDiagramSnapshot | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
@@ -622,6 +635,41 @@ const IDEPageContent = () => {
     setCode(generateMermaidFromFlow(currentNodes, currentEdges));
     setParseError(null);
     if (monacoRef.current) monacoRef.current.monaco.editor.setModelMarkers(monacoRef.current.editor.getModel(), "mermaid", []);
+  }, []);
+
+  const hasUnsavedChanges = persistedDiagram
+    ? persistedDiagram.id !== currentDiagramId || persistedDiagram.title !== diagramTitle || persistedDiagram.code !== code
+    : diagramTitle !== DEFAULT_DIAGRAM_TITLE || code !== DEFAULT_MERMAID_CODE;
+
+  const effectiveSaveState: SaveState = saveState === "saving" || saveState === "error"
+    ? saveState
+    : hasUnsavedChanges
+      ? "dirty"
+      : persistedDiagram
+        ? "saved"
+        : "idle";
+
+  useEffect(() => {
+    setSaveState((currentState) => {
+      if (currentState === "saving") {
+        return currentState;
+      }
+
+      if (currentState === "error") {
+        return hasUnsavedChanges ? "dirty" : currentState;
+      }
+
+      if (hasUnsavedChanges) {
+        return "dirty";
+      }
+
+      return persistedDiagram ? "saved" : "idle";
+    });
+  }, [hasUnsavedChanges, persistedDiagram]);
+
+  const markDiagramPersisted = useCallback((diagram: PersistedDiagramSnapshot) => {
+    setPersistedDiagram(diagram);
+    setSaveState("saved");
   }, []);
 
   useEffect(() => {
@@ -921,19 +969,25 @@ const IDEPageContent = () => {
     setCurrentUser(null);
     setDiagramList([]);
     setCurrentDiagramId(null);
+    setPersistedDiagram(null);
+    setSaveState("idle");
   };
 
   const handleSave = async () => {
     if (!authToken) { setAuthModal('login'); return; }
+    setSaveState("saving");
     try {
       if (currentDiagramId) {
         await api.updateDiagram(currentDiagramId, { title: diagramTitle, content: code });
+        markDiagramPersisted({ id: currentDiagramId, title: diagramTitle, code });
       } else {
         const created = await api.createDiagram(diagramTitle, code);
         setCurrentDiagramId(created.id);
+        markDiagramPersisted({ id: created.id, title: diagramTitle, code });
       }
       api.listDiagrams().then(setDiagramList).catch(() => {});
     } catch (e) {
+      setSaveState("error");
       alert(e instanceof Error ? e.message : 'Save failed');
     }
   };
@@ -944,6 +998,7 @@ const IDEPageContent = () => {
       setCurrentDiagramId(diagram.id);
       setDiagramTitle(diagram.title);
       setCode(diagram.content);
+      markDiagramPersisted({ id: diagram.id, title: diagram.title, code: diagram.content });
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Load failed');
     }
@@ -967,7 +1022,7 @@ const IDEPageContent = () => {
     window.open(api.exportUrl(currentDiagramId, format), '_blank');
   };
 
-  const theme = isDarkMode ? { bgMain: "bg-[#1e1e1e]", text: "text-[#cccccc]", textMuted: "text-slate-400", border: "border-[#2b2b2b]", toolbar: "bg-[#181818]", hover: "hover:bg-[#333333]", searchBg: "bg-[#2b2b2b]", searchBorder: "border-[#3c3c3c]", itemHover: "hover:bg-[#2a2d2e]", itemActive: "bg-[#37373d]", editorTabTop: "border-blue-500", shapeBorder: "border-[#4b4b4b]", shapeFill: "bg-[#252526]" } : { bgMain: "bg-white", text: "text-slate-800", textMuted: "text-slate-500", border: "border-slate-300", toolbar: "bg-[#f3f3f3]", hover: "hover:bg-[#e4e4e4]", searchBg: "bg-white", searchBorder: "border-slate-300", itemHover: "hover:bg-slate-100", itemActive: "bg-[#e4e6f1] text-blue-700", editorTabTop: "border-blue-600", shapeBorder: "border-slate-300", shapeFill: "bg-white" };
+  const theme: WorkspaceTheme = isDarkMode ? { bgMain: "bg-[#1e1e1e]", text: "text-[#cccccc]", textMuted: "text-slate-400", border: "border-[#2b2b2b]", toolbar: "bg-[#181818]", hover: "hover:bg-[#333333]", searchBg: "bg-[#2b2b2b]", searchBorder: "border-[#3c3c3c]", itemHover: "hover:bg-[#2a2d2e]", itemActive: "bg-[#37373d]", editorTabTop: "border-blue-500", shapeBorder: "border-[#4b4b4b]", shapeFill: "bg-[#252526]" } : { bgMain: "bg-white", text: "text-slate-800", textMuted: "text-slate-500", border: "border-slate-300", toolbar: "bg-[#f3f3f3]", hover: "hover:bg-[#e4e4e4]", searchBg: "bg-white", searchBorder: "border-slate-300", itemHover: "hover:bg-slate-100", itemActive: "bg-[#e4e6f1] text-blue-700", editorTabTop: "border-blue-600", shapeBorder: "border-slate-300", shapeFill: "bg-white" };
   const libFill = isDarkMode ? '#333333' : '#ffffff';
   const libStroke = isDarkMode ? '#cccccc' : '#1e293b';
   const toggleShapeMenu = (category: string) => setOpenShapeMenus(prev => ({ ...prev, [category]: !prev[category] }));
@@ -1162,31 +1217,35 @@ const IDEPageContent = () => {
         </div>
       )}
 
-      <div className={`flex items-center justify-between h-10 px-3 ${theme.toolbar} border-b ${theme.border} text-sm select-none shrink-0`}>
-        <div className="flex items-center gap-4">
-          <Menu size={16} className={`cursor-pointer ${isDarkMode ? 'hover:text-white' : 'hover:text-black'}`} />
-          <div className="hidden md:flex gap-3 text-[13px]">{['File', 'Edit', 'Selection', 'View', 'Go', 'Run', 'Help'].map(item => (<span key={item} className={`cursor-pointer ${isDarkMode ? 'hover:text-white' : 'hover:text-black'}`}>{item}</span>))}</div>
-        </div>
-        <div className={`flex-1 max-w-md mx-4 ${theme.searchBg} rounded-md h-6 flex items-center px-2 justify-center border ${theme.searchBorder} cursor-pointer ${theme.hover} transition`}><Search size={14} className={`mr-2 ${theme.textMuted}`} /><span className={`text-xs ${theme.textMuted}`}>ba-ide-mvp</span></div>
-        <div className="flex items-center gap-1">
-          {currentUser ? (
-            <div className="flex items-center gap-1 mr-1">
-              <span className={`text-xs hidden md:block ${theme.textMuted}`}>{currentUser.email}</span>
-              <button onClick={handleLogout} className={`p-1 rounded transition ${theme.hover}`} title="Logout">
-                <LogOut size={16} />
-              </button>
-            </div>
-          ) : (
-            <button onClick={() => setAuthModal('login')} className={`p-1 mr-1 rounded transition ${theme.hover}`} title="Login / Register">
-              <LogIn size={16} />
-            </button>
-          )}
-          <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-1 mr-2 rounded transition ${theme.hover}`} title="Toggle Theme">{isDarkMode ? <Sun size={16} className="text-yellow-400" /> : <Moon size={16} className="text-slate-600" />}</button>
-          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={`p-1 rounded transition ${isSidebarOpen ? (isDarkMode ? 'bg-[#333333] text-white' : 'bg-[#e4e4e4] text-black') : theme.hover}`} title="Toggle Primary Side Bar"><PanelLeft size={16} /></button>
-          <button onClick={() => setIsTerminalOpen(!isTerminalOpen)} className={`p-1 rounded transition ${isTerminalOpen ? (isDarkMode ? 'bg-[#333333] text-white' : 'bg-[#e4e4e4] text-black') : theme.hover}`} title="Toggle Terminal"><PanelBottom size={16} /></button>
-          <button onClick={() => setIsRightPanelOpen(!isRightPanelOpen)} className={`p-1 rounded transition ${isRightPanelOpen ? (isDarkMode ? 'bg-[#333333] text-white' : 'bg-[#e4e4e4] text-black') : theme.hover}`} title="Toggle Right Panel"><PanelRight size={16} /></button>
-        </div>
-      </div>
+      <WorkspaceTopBar
+        theme={theme}
+        isDarkMode={isDarkMode}
+        diagramTitle={diagramTitle}
+        onDiagramTitleChange={setDiagramTitle}
+        documentHint={currentDiagramId ? "Saved workspace" : "Draft workspace"}
+        rightContent={(
+          <TopRightCommandBar
+            theme={theme}
+            isDarkMode={isDarkMode}
+            currentUser={currentUser}
+            saveState={effectiveSaveState}
+            canShare={!!currentDiagramId}
+            canExport={!!currentDiagramId}
+            isSidebarOpen={isSidebarOpen}
+            isTerminalOpen={isTerminalOpen}
+            isRightPanelOpen={isRightPanelOpen}
+            onOpenAuth={() => setAuthModal('login')}
+            onLogout={handleLogout}
+            onToggleTheme={() => setIsDarkMode(!isDarkMode)}
+            onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+            onToggleTerminal={() => setIsTerminalOpen(!isTerminalOpen)}
+            onToggleRightPanel={() => setIsRightPanelOpen(!isRightPanelOpen)}
+            onSave={handleSave}
+            onShare={handleShare}
+            onExport={() => handleExport('svg')}
+          />
+        )}
+      />
 
       <div className="flex flex-1 overflow-hidden">
         {isSidebarOpen && (
@@ -1256,31 +1315,12 @@ const IDEPageContent = () => {
           <div className={`w-1 cursor-col-resize hover:bg-blue-500 active:bg-blue-600 transition-colors z-10 ${theme.border} border-l`} onMouseDown={() => setIsDraggingEditor(true)} />
 
           <div className="flex-1 relative bg-slate-50 min-w-[200px] flex flex-col" ref={reactFlowWrapper}>
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 px-3 py-1.5 bg-white rounded-full shadow-lg border border-slate-200 text-slate-700">
-              <button onClick={handleSyncCodeToDiagram} className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-full transition shadow-sm" title="Manual Sync Text to Diagram">
-                <Play size={14} /> <span className="hidden xl:inline">Sync Code to Visual</span>
-              </button>
-              <div className="w-px h-5 bg-slate-300 mx-1"></div>
-              <button onClick={handleAutoLayout} className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-full transition" title="Auto Layout Diagram">
-                <Wand2 size={14} /> <span className="hidden xl:inline">Auto Layout</span>
-              </button>
-
-              {/* ART MODE TOGGLE */}
-              <div className="w-px h-5 bg-slate-300 mx-1"></div>
-              <button onClick={() => setIsDrawingMode(!isDrawingMode)} className={`flex items-center gap-1.5 px-3 py-1 text-sm font-medium rounded-full transition ${isDrawingMode ? 'bg-purple-100 text-purple-700' : 'text-slate-700 hover:text-blue-600 hover:bg-blue-50'}`} title="Art Mode (Freehand Drawing)">
-                {isDrawingMode ? <Eraser size={14} /> : <PenTool size={14} />} <span className="hidden xl:inline">{isDrawingMode ? 'Exit Art Mode' : 'Art Mode'}</span>
-              </button>
-              <div className="w-px h-5 bg-slate-300 mx-1"></div>
-              <button onClick={handleSave} className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-slate-700 hover:text-green-600 hover:bg-green-50 rounded-full transition" title="Save">
-                <Save size={14} /> <span className="hidden xl:inline">Save</span>
-              </button>
-              <button onClick={handleShare} className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-full transition" title="Share">
-                <Share2 size={14} /> <span className="hidden xl:inline">Share</span>
-              </button>
-              <button onClick={() => handleExport('svg')} className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-slate-700 hover:text-purple-600 hover:bg-purple-50 rounded-full transition" title="Export SVG">
-                <FileDown size={14} /> <span className="hidden xl:inline">Export</span>
-              </button>
-            </div>
+            <CanvasActionBar
+              isDrawingMode={isDrawingMode}
+              onSyncCodeToDiagram={handleSyncCodeToDiagram}
+              onAutoLayout={handleAutoLayout}
+              onToggleDrawingMode={() => setIsDrawingMode(!isDrawingMode)}
+            />
 
             {/* ART MODE OPTIONS PANEL */}
             {isDrawingMode && (
