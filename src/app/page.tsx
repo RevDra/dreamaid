@@ -35,8 +35,11 @@ import {
   Play, Search, Folder, FileCode, ChevronDown, ChevronRight, Menu,
   MoreHorizontal, Sun, Moon, Type, Circle, User, StickyNote,
   MessageSquare, Box, X, Wand2, PanelLeft, PanelBottom, PanelRight,
-  Hexagon, Triangle, Database, Cloud, FileText, RotateCw
+  Hexagon, Triangle, Database, Cloud, FileText, RotateCw, PlusCircle, Upload
 } from "lucide-react";
+
+// --- QUẢN LÝ ẢNH UPLOAD (Tránh phình to mã Mermaid) ---
+const globalImageRegistry: Record<string, string> = {};
 
 // --- SHAPE DESCRIPTIONS ---
 const shapeDescriptions: Record<string, string> = {
@@ -59,7 +62,8 @@ const shapeDescriptions: Record<string, string> = {
   'step': 'A step in a sequential process.',
   'callout': 'A callout or speech bubble for comments.',
   'actor': 'A user, actor, or person.',
-  'note': 'A sticky note for documentation.'
+  'note': 'A sticky note for documentation.',
+  'image': 'Custom uploaded image.'
 };
 
 // --- BỘ MÁY VẼ HÌNH HỌC SVG CHUẨN XÁC ---
@@ -94,7 +98,6 @@ const ShapeSvgRenderer = ({ type, fill, stroke, strokeWidth = 2, selected, isLib
   else if (type === 'document') content = <path d="M 0 0 L 100 0 L 100 85 C 75 100, 25 70, 0 85 Z" {...common} />;
   else if (type === 'callout') content = <path d="M 0 0 L 100 0 L 100 70 L 40 70 L 20 100 L 20 70 L 0 70 Z" {...common} />;
   else if (type === 'actor') content = <><circle cx="50" cy="25" r="25" {...common} /><path d="M 0 100 Q 0 50 50 50 Q 100 50 100 100 Z" {...common} /></>;
-  // FIX MÂY (Cubic Bezier cong mịn màng)
   else if (type === 'cloud') content = <path d="M 25 80 C 5 80 5 45 25 40 C 25 15 70 10 75 35 C 95 35 95 75 85 80 C 85 90 25 90 25 80 Z" {...common} />;
 
   return <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100" style={{ overflow: 'visible' }}>{content}</svg>;
@@ -102,7 +105,7 @@ const ShapeSvgRenderer = ({ type, fill, stroke, strokeWidth = 2, selected, isLib
 
 // --- 1. CUSTOM SHAPE NODE ---
 const CustomShapeNode = ({ id, data, selected, style }: any) => {
-  const { shapeType, label, rotation = 0 } = data;
+  const { shapeType, label, imageUrl, rotation = 0 } = data;
   const [isHovered, setIsHovered] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(label);
@@ -156,11 +159,14 @@ const CustomShapeNode = ({ id, data, selected, style }: any) => {
   };
 
   const isText = shapeType === 'text';
-  const fillColor = isText ? 'transparent' : '#ffffff';
+  const fillColor = isText || shapeType === 'image' ? 'transparent' : '#ffffff';
   const strokeColor = selected ? '#3b82f6' : '#1e293b';
   const strokeWidth = selected ? 3 : 2;
 
   const handleStyle = { width: '8px', height: '8px', background: '#3b82f6', opacity: showHandles ? 1 : 0, transition: 'opacity 0.2s', border: '1px solid white' };
+
+  // Xử lý lấy ảnh thật từ Registry nếu là ảnh Custom
+  const displayUrl = imageUrl?.startsWith('custom_') ? (globalImageRegistry[imageUrl] || '') : imageUrl;
 
   return (
     <div className="relative group w-full h-full" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
@@ -186,12 +192,13 @@ const CustomShapeNode = ({ id, data, selected, style }: any) => {
         <Handle type="source" position={Position.Left} id="left-s" style={{...handleStyle, left: '-4px'}} />
         
         <div className="absolute inset-0 z-0 pointer-events-none">
-           <ShapeSvgRenderer type={shapeType} fill={fillColor} stroke={strokeColor} strokeWidth={strokeWidth} selected={selected} />
+           {shapeType === 'image' && displayUrl && <img src={displayUrl} className="w-full h-full object-contain pointer-events-none p-1" />}
+           {shapeType !== 'image' && <ShapeSvgRenderer type={shapeType} fill={fillColor} stroke={strokeColor} strokeWidth={strokeWidth} selected={selected} />}
         </div>
 
-        <div className={`absolute inset-0 z-10 flex flex-col items-center justify-center p-2 text-[#0f172a] text-xs font-medium text-center ${shapeType === 'actor' ? 'justify-end pb-0' : ''}`} onDoubleClick={() => setIsEditing(true)}>
+        <div className={`absolute inset-0 z-10 flex flex-col items-center justify-center p-2 text-[#0f172a] text-xs font-medium text-center ${shapeType === 'actor' ? 'justify-end pb-0' : ''} ${shapeType === 'image' ? 'justify-end -bottom-6 h-auto drop-shadow-md' : ''}`} onDoubleClick={() => setIsEditing(true)}>
           {isEditing ? (
-            <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={e => e.key === 'Enter' && saveEdit()} className="w-[90%] text-center text-slate-800 bg-transparent outline-none border-b border-blue-400" />
+            <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={e => e.key === 'Enter' && saveEdit()} className="w-[90%] text-center text-slate-800 bg-white/80 outline-none border-b border-blue-400" />
           ) : label}
         </div>
       </div>
@@ -238,7 +245,6 @@ const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, d
     return (
       <>
         <BaseEdge id={id} path={edgePath} style={style} markerEnd={markerEnd} markerStart={markerStart} />
-        {/* FIX EMPTY BOX: Chỉ hiển thị Box khi label khác rỗng hoặc đang Edit */}
         {(label || isEditing) ? (
           <EdgeLabelRenderer>
             <div onDoubleClick={() => setIsEditing(true)} className="nodrag nopan" style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`, background: 'white', padding: '2px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: 11, fontWeight: 600, color: '#334155', zIndex: 20, pointerEvents: 'all' }}>
@@ -289,7 +295,6 @@ const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, d
   return (
     <>
       <BaseEdge id={id} path={edgePath} style={style} markerEnd={markerEnd} markerStart={markerStart} />
-      {/* FIX EMPTY BOX */}
       {(label || isEditing) ? (
         <EdgeLabelRenderer>
           <div onDoubleClick={() => setIsEditing(true)} className="nodrag nopan" style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`, background: 'white', padding: '2px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: 11, fontWeight: 600, color: '#334155', zIndex: 20, pointerEvents: 'all' }}>
@@ -354,7 +359,7 @@ const parseMermaid = (code: string) => {
     let cleanLine = line.trim();
     if (!cleanLine || cleanLine.startsWith('graph') || cleanLine.startsWith('flowchart') || cleanLine.startsWith('%%')) return;
     
-    let metadata = { shapeType: 'rectangle', x: undefined as number|undefined, y: undefined as number|undefined, w: 120, h: 40, rot: 0 };
+    let metadata = { shapeType: 'rectangle', x: undefined as number|undefined, y: undefined as number|undefined, w: 120, h: 40, rot: 0, img: undefined as string|undefined };
     let codePart = cleanLine;
 
     if (cleanLine.includes('%%')) {
@@ -367,6 +372,7 @@ const parseMermaid = (code: string) => {
        const wMatch = metaStr.match(/w:(-?\d+)/); if (wMatch) metadata.w = parseInt(wMatch[1]);
        const hMatch = metaStr.match(/h:(-?\d+)/); if (hMatch) metadata.h = parseInt(hMatch[1]);
        const rMatch = metaStr.match(/rot:(-?\d+)/); if (rMatch) metadata.rot = parseInt(rMatch[1]);
+       const imgMatch = metaStr.match(/img:([^\s]+)/); if (imgMatch) metadata.img = imgMatch[1];
     }
     
     if (!codePart) return; 
@@ -377,7 +383,7 @@ const parseMermaid = (code: string) => {
       const sourceLabel = sQ || sNQ || sourceId; const targetLabel = tQ || tNQ || targetId;
       const isBidirectional = arrow.includes('<');
 
-      if (!nodesMap.has(sourceId)) nodesMap.set(sourceId, { id: sourceId, position: { x: metadata.x || 0, y: metadata.y || 0 }, data: { label: sourceLabel, shapeType: metadata.shapeType, rotation: metadata.rot }, style: { width: metadata.w, height: metadata.h }, type: 'customShape' });
+      if (!nodesMap.has(sourceId)) nodesMap.set(sourceId, { id: sourceId, position: { x: metadata.x || 0, y: metadata.y || 0 }, data: { label: sourceLabel, shapeType: metadata.shapeType, imageUrl: metadata.img, rotation: metadata.rot }, style: { width: metadata.w, height: metadata.h }, type: 'customShape' });
       if (!nodesMap.has(targetId)) nodesMap.set(targetId, { id: targetId, position: { x: (metadata.x || 0) + 200, y: (metadata.y || 0) + 100 }, data: { label: targetLabel, shapeType: 'rectangle' }, style: { width: 120, height: 40 }, type: 'customShape' });
       
       edges.push({ id: `e${sourceId}-${targetId}-${index}`, source: sourceId, target: targetId, label: edgeLabel || undefined, type: 'smart', markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20 }, markerStart: isBidirectional ? { type: MarkerType.ArrowClosed, width: 20, height: 20 } : undefined, data: { bidirectional: isBidirectional } });
@@ -389,10 +395,10 @@ const parseMermaid = (code: string) => {
       const [_, nodeId, lQ, lNQ] = nodeMatch;
       const label = lQ || lNQ || nodeId;
       if (!nodesMap.has(nodeId)) {
-        nodesMap.set(nodeId, { id: nodeId, position: { x: metadata.x !== undefined ? metadata.x : Math.random() * 200, y: metadata.y !== undefined ? metadata.y : Math.random() * 200 }, data: { label, shapeType: metadata.shapeType, rotation: metadata.rot }, style: { width: metadata.w, height: metadata.h }, type: 'customShape' });
+        nodesMap.set(nodeId, { id: nodeId, position: { x: metadata.x !== undefined ? metadata.x : Math.random() * 200, y: metadata.y !== undefined ? metadata.y : Math.random() * 200 }, data: { label, shapeType: metadata.shapeType, imageUrl: metadata.img, rotation: metadata.rot }, style: { width: metadata.w, height: metadata.h }, type: 'customShape' });
       } else {
         const existingNode = nodesMap.get(nodeId)!;
-        existingNode.data.label = label; existingNode.data.shapeType = metadata.shapeType; existingNode.data.rotation = metadata.rot;
+        existingNode.data.label = label; existingNode.data.shapeType = metadata.shapeType; existingNode.data.imageUrl = metadata.img; existingNode.data.rotation = metadata.rot;
         if (metadata.x !== undefined && metadata.y !== undefined) existingNode.position = { x: metadata.x, y: metadata.y };
         existingNode.style = { width: metadata.w, height: metadata.h };
       }
@@ -411,10 +417,11 @@ const generateMermaidFromFlow = (nodes: Node[], edges: Edge[]): string => {
     const label = node.data.label || node.id;
     const shape = node.data.shapeType || 'rectangle';
     const rot = node.data.rotation || 0;
+    const imgStr = node.data.imageUrl ? ` img:${node.data.imageUrl}` : "";
     const x = Math.round(node.position.x); const y = Math.round(node.position.y);
     const w = Math.round(node.style?.width as number || node.width || 120);
     const h = Math.round(node.style?.height as number || node.height || 40);
-    mermaidCode += `    ${node.id}["${label}"] %% shape:${shape} x:${x} y:${y} w:${w} h:${h} rot:${rot}\n`; 
+    mermaidCode += `    ${node.id}["${label}"] %% shape:${shape}${imgStr} x:${x} y:${y} w:${w} h:${h} rot:${rot}\n`; 
   });
   mermaidCode += "\n";
   edges.forEach(edge => {
@@ -438,13 +445,14 @@ const autoLayoutElements = (nodes: Node[], edges: Edge[]) => {
   });
 };
 
-const SHAPE_CATEGORIES = ["General", "Flowchart"];
+const SHAPE_CATEGORIES = ["Custom", "General", "Flowchart"];
 
 // --- NỘI DUNG IDE CHÍNH ---
 const IDEPageContent = () => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const coordsRef = useRef<HTMLDivElement>(null); 
   const monacoRef = useRef<any>(null); 
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const { screenToFlowPosition } = useReactFlow();
 
@@ -455,8 +463,10 @@ const IDEPageContent = () => {
   const [isTerminalOpen, setIsTerminalOpen] = useState<boolean>(false); 
   const [parseError, setParseError] = useState<{line: number, message: string, lineText: string} | null>(null);
 
-  const [openShapeMenus, setOpenShapeMenus] = useState<Record<string, boolean>>({ "General": true, "Flowchart": true });
+  const [openShapeMenus, setOpenShapeMenus] = useState<Record<string, boolean>>({ "Custom": true, "General": true, "Flowchart": true });
   
+  const [customShapes, setCustomShapes] = useState<any[]>([]);
+
   const [explorerWidth, setExplorerWidth] = useState<number>(256);
   const [editorWidth, setEditorWidth] = useState<number>(500);
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(256);
@@ -479,6 +489,50 @@ const IDEPageContent = () => {
     setParseError(null);
     if (monacoRef.current) monacoRef.current.monaco.editor.setModelMarkers(monacoRef.current.editor.getModel(), "mermaid", []);
   }, []);
+
+  // LOAD TỪ LOCALSTORAGE
+  useEffect(() => {
+    try {
+      const savedShapes = JSON.parse(localStorage.getItem('custom_shapes_list') || '[]');
+      savedShapes.forEach((s: any) => {
+        const base64 = localStorage.getItem(s.url);
+        if (base64) {
+          globalImageRegistry[s.url] = base64;
+        }
+      });
+      setCustomShapes(savedShapes);
+    } catch (e) {}
+  }, []);
+
+  // UPLOAD FILE NGẦM
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      const imgId = `custom_${Date.now()}`;
+      globalImageRegistry[imgId] = base64;
+      
+      const newShapeInfo = { label: file.name.split('.')[0].substring(0, 15), url: imgId };
+
+      try {
+        localStorage.setItem(imgId, base64);
+        const savedShapes = JSON.parse(localStorage.getItem('custom_shapes_list') || '[]');
+        savedShapes.push(newShapeInfo);
+        localStorage.setItem('custom_shapes_list', JSON.stringify(savedShapes));
+      } catch (err) {
+        console.warn("LocalStorage may be full, saving in memory only.");
+      }
+
+      setCustomShapes(prev => [...prev, newShapeInfo]);
+      setOpenShapeMenus(prev => ({ ...prev, "Custom": true }));
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
 
   useEffect(() => {
     const nodeHandler = (e: any) => { updateCodeFromFlow(e.detail.nodes, edges); };
@@ -524,6 +578,7 @@ const IDEPageContent = () => {
   const onNodesChange = useCallback((changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds)), []);
   const onEdgesChange = useCallback((changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)), []);
   const onNodeDragStop = useCallback(() => { updateCodeFromFlow(nodes, edges); }, [nodes, edges, updateCodeFromFlow]);
+  const onNodeResizeStop = useCallback(() => { updateCodeFromFlow(nodes, edges); }, [nodes, edges, updateCodeFromFlow]);
   
   const onConnect = useCallback((params: Connection) => {
     const rawEdge = { ...params, id: `e${params.source}-${params.target}-${Date.now()}`, type: 'smart', markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20 } } as Edge;
@@ -544,27 +599,27 @@ const IDEPageContent = () => {
     }
   }, [screenToFlowPosition]);
 
-  const onDragStart = (event: React.DragEvent, shapeType: string, defaultLabel: string) => {
+  const onDragStart = (event: React.DragEvent, shapeType: string, defaultLabel: string, imageUrl?: string) => {
     event.dataTransfer.setData("application/reactflow-type", shapeType);
     event.dataTransfer.setData("application/reactflow-label", defaultLabel);
+    if (imageUrl) event.dataTransfer.setData("application/reactflow-image", imageUrl);
     event.dataTransfer.effectAllowed = "move";
   };
   const onDragOver = useCallback((event: React.DragEvent) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }, []);
   
-  const addNodeToCanvas = useCallback((type: string, label: string, position: {x: number, y: number}) => {
+  const addNodeToCanvas = useCallback((type: string, label: string, position: {x: number, y: number}, imageUrl?: string) => {
     const uniqueId = Date.now().toString().slice(-4);
     const newNodeId = `node_${type}_${uniqueId}`;
     
-    // FIX TỶ LỆ KÍCH THƯỚC OVAL & CLOUD KHI VÀO CANVAS
     let w = 120, h = 40;
-    if (['square', 'circle', 'hexagon', 'cube', 'actor'].includes(type)) { w = 80; h = 80; }
+    if (['square', 'circle', 'hexagon', 'cube', 'actor', 'image'].includes(type)) { w = 80; h = 80; }
     else if (type === 'ellipse') { w = 120; h = 60; }
     else if (type === 'cloud') { w = 120; h = 80; }
     else if (type === 'text') { w = 50; h = 30; }
 
     const newNode: Node = { 
       id: newNodeId, type: 'customShape', position, 
-      data: { label: `${label}`, shapeType: type, rotation: 0 }, 
+      data: { label: `${label}`, shapeType: type, imageUrl, rotation: 0 }, 
       style: { width: w, height: h } 
     };
     const newNodes = nodes.concat(newNode);
@@ -575,15 +630,16 @@ const IDEPageContent = () => {
       event.preventDefault();
       const type = event.dataTransfer.getData("application/reactflow-type");
       const label = event.dataTransfer.getData("application/reactflow-label");
+      const imageUrl = event.dataTransfer.getData("application/reactflow-image");
       if (!type) return;
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-      addNodeToCanvas(type, label, position);
+      addNodeToCanvas(type, label, position, imageUrl);
   }, [screenToFlowPosition, addNodeToCanvas]);
 
-  const onShapeClick = useCallback((type: string, label: string) => {
+  const onShapeClick = useCallback((type: string, label: string, imageUrl?: string) => {
       const offset = (Math.random() * 40) - 20; 
       const centerPosition = screenToFlowPosition({ x: window.innerWidth / 2 + offset, y: window.innerHeight / 2 + offset });
-      addNodeToCanvas(type, label, centerPosition);
+      addNodeToCanvas(type, label, centerPosition, imageUrl);
   }, [screenToFlowPosition, addNodeToCanvas]);
 
   const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
@@ -663,6 +719,37 @@ const IDEPageContent = () => {
   };
 
   const renderShapeItems = (category: string) => {
+    if (category === "Custom") {
+      return (
+        <>
+          <input type="file" accept="image/png, image/jpeg, image/jpg, image/svg+xml" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
+          
+          <div 
+             onClick={() => fileInputRef.current?.click()}
+             className={`aspect-square rounded border border-dashed ${isDarkMode ? 'border-[#4b4b4b] hover:border-blue-500 text-slate-400' : 'border-slate-300 hover:border-blue-500 text-slate-500'} cursor-pointer flex flex-col items-center justify-center p-2 transition-colors`}
+             title="Upload Custom Image Shape"
+          >
+             <Upload size={16} className="mb-1" />
+             <span className="text-[10px] text-center leading-tight">Insert<br/>Shape</span>
+          </div>
+
+          {customShapes.map(item => {
+            const displayUrl = globalImageRegistry[item.url] || '';
+            const customItem = { type: 'image', label: item.label, icon: <img src={displayUrl} style={{width: 24}}/>, url: item.url };
+            return (
+              <div 
+                key={item.label} onClick={() => onShapeClick('image', item.label, item.url)} draggable onDragStart={(event) => onDragStart(event, 'image', item.label, item.url)}
+                onMouseEnter={(e) => handleShapeMouseEnter(e, customItem)} onMouseLeave={handleShapeMouseLeave}
+                className={`aspect-square rounded border ${isDarkMode ? 'border-[#3c3c3c] bg-[#1e1e1e] hover:bg-[#2a2d2e]' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'} hover:border-blue-500 cursor-pointer flex items-center justify-center p-2`} title={item.label}
+              >
+                <img src={displayUrl} alt={item.label} className="w-full h-full object-contain pointer-events-none" />
+              </div>
+            )
+          })}
+        </>
+      );
+    }
+
     if (category === "General") {
       return (
         <>
@@ -709,6 +796,7 @@ const IDEPageContent = () => {
   return (
     <div className={`flex flex-col h-screen w-full ${theme.bgMain} ${theme.text} font-sans overflow-hidden transition-colors duration-200`} onClick={closeContextMenu}>
       
+      {/* SHAPE TOOLTIP PORTAL (Tự động theo Light/Dark Mode) */}
       {hoveredShape && (
         <div 
           className={`fixed z-[9999] text-xs rounded-md shadow-2xl p-3 w-48 pointer-events-none transform -translate-x-full -translate-y-1/2 transition-opacity ${isDarkMode ? 'bg-[#252526] text-white border border-[#4b4b4b]' : 'bg-white text-slate-800 border border-slate-300'}`}
@@ -716,7 +804,7 @@ const IDEPageContent = () => {
         >
           <div className="flex flex-col items-center gap-2">
              <div className={`w-12 h-12 flex items-center justify-center p-1 rounded border ${isDarkMode ? 'bg-[#1e1e1e] border-[#4b4b4b]' : 'bg-slate-50 border-slate-200'}`}>
-                {hoveredShape.item.type === 'text' ? hoveredShape.item.icon : <div className="w-full h-full">{hoveredShape.item.icon}</div>}
+                {hoveredShape.item.type === 'text' || hoveredShape.item.type === 'image' ? hoveredShape.item.icon : <div className="w-full h-full">{hoveredShape.item.icon}</div>}
              </div>
              <div className="font-bold text-[13px] text-center">{hoveredShape.item.label}</div>
              <div className={`text-center leading-snug ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{shapeDescriptions[hoveredShape.item.type] || 'A flowchart shape.'}</div>
@@ -725,6 +813,7 @@ const IDEPageContent = () => {
         </div>
       )}
 
+      {/* CONTEXT MENU */}
       {contextMenu && (
         <div style={{ top: contextMenu.top, left: contextMenu.left }} className="fixed z-[100] bg-white border border-slate-200 shadow-xl rounded-md py-1 w-36 text-sm">
           <button onClick={handleEditItem} className="w-full text-left px-4 py-2 hover:bg-slate-100 text-slate-700 transition">Edit text</button>
@@ -815,7 +904,8 @@ const IDEPageContent = () => {
               X: 0 | Y: 0
             </div>
 
-            <div className={`absolute top-4 left-4 z-10 px-2 py-1 text-xs font-medium rounded-md shadow border ${theme.border} ${theme.bgMain} ${theme.text}`}>{(zoomLevel * 100).toFixed(0)}%</div>
+            {/* MINIMAP - Góc phải dưới */}
+            <div className={`absolute bottom-4 left-4 z-10 px-2 py-1 text-xs font-medium rounded-md shadow border ${theme.border} ${theme.bgMain} ${theme.text}`}>{(zoomLevel * 100).toFixed(0)}%</div>
             
             <div className="flex-1 w-full h-full" onPointerMove={handleCanvasPointerMove} onMouseUp={handleCanvasMouseUp}>
               <ReactFlow 
@@ -830,6 +920,7 @@ const IDEPageContent = () => {
               >
                 <Background color="#cbd5e1" gap={16} />
                 <Controls className="bg-white border-slate-200 fill-slate-600 mb-4 mr-4 shadow-sm rounded-md" />
+                <MiniMap position="bottom-right" nodeColor="#cbd5e1" maskColor="rgba(248, 250, 252, 0.7)" className="shadow-sm rounded-md border border-slate-200" nodeBorderRadius={8} style={{ zIndex: 100 }} />
               </ReactFlow>
             </div>
           </div>
