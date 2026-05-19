@@ -88,8 +88,15 @@ const ShapeSvgRenderer = ({ type, fill, stroke, strokeWidth = 2, selected, isLib
   const common = { fill, stroke, strokeWidth, vectorEffect: "non-scaling-stroke", strokeLinejoin: "round" as const };
   const commonNone = { ...common, fill: "none" };
 
+  if (type === 'text') {
+    return (
+      <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100" style={{ overflow: 'visible' }}>
+        {selected && <rect x="0" y="0" width="100" height="100" fill="none" stroke="#3b82f6" strokeWidth="2" strokeDasharray="4" vectorEffect="non-scaling-stroke" />}
+      </svg>
+    );
+  }
+
   let content = <rect x="0" y="0" width="100" height="100" {...common} />; 
-  
   if (type === 'rectangle') content = <rect x={isLibrary ? 5 : 0} y={isLibrary ? 25 : 0} width={isLibrary ? 90 : 100} height={isLibrary ? 50 : 100} {...common} />;
   else if (type === 'square') content = <rect x={isLibrary ? 15 : 0} y={isLibrary ? 15 : 0} width={isLibrary ? 70 : 100} height={isLibrary ? 70 : 100} {...common} />;
   else if (type === 'rounded') content = <rect x={isLibrary ? 5 : 0} y={isLibrary ? 25 : 0} width={isLibrary ? 90 : 100} height={isLibrary ? 50 : 100} rx="10" ry="10" {...common} />;
@@ -124,7 +131,7 @@ const ShapeSvgRenderer = ({ type, fill, stroke, strokeWidth = 2, selected, isLib
   else if (type === 'summingJunction') content = <><circle cx="50" cy="50" r="50" {...common}/><line x1="50" y1="0" x2="50" y2="100" {...commonNone}/><line x1="0" y1="50" x2="100" y2="50" {...commonNone}/></>;
   else if (type === 'annotationLeft') content = <path d="M 20 0 L 15 0 C 5 0 5 20 5 40 C 5 45 0 50 0 50 C 5 50 5 55 5 60 C 5 80 5 100 15 100 L 20 100" {...commonNone} />;
   else if (type === 'annotationRight') content = <path d="M 80 0 L 85 0 C 95 0 95 20 95 40 C 95 45 100 50 100 50 C 95 50 95 55 95 60 C 95 80 95 100 85 100 L 80 100" {...commonNone} />;
-  else if (type === 'text' || type === 'image') content = <></>;
+  else if (type === 'image') content = <></>;
 
   return (
     <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100" style={{ overflow: 'visible' }}>
@@ -136,8 +143,8 @@ const ShapeSvgRenderer = ({ type, fill, stroke, strokeWidth = 2, selected, isLib
   );
 };
 
-// --- 1.1 DRAWING NODE (Dành cho Art Mode) ---
-const DrawNode = ({ data, selected }: any) => {
+// --- 1.1 DRAWING NODE (Dành cho nét vẽ tay & Tính năng Cục gôm) ---
+const DrawNode = ({ id, data, selected }: any) => {
   const { points, color, width, penStyle, isTemp, origW, origH, rotation = 0 } = data;
   const nodeRef = useRef<HTMLDivElement>(null);
   const { setNodes } = useReactFlow();
@@ -164,14 +171,12 @@ const DrawNode = ({ data, selected }: any) => {
     const onMouseUp = () => {
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
-      // Cập nhật state nội bộ canvas, KHÔNG gửi cho Mermaid
     };
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
   };
 
   const d = points && points.length > 0 ? `M ${points[0].x} ${points[0].y} ` + points.map((p:any) => `L ${p.x} ${p.y}`).join(' ') : '';
-  
   const strokeDash = penStyle === 'dashed' ? '8 8' : penStyle === 'dotted' ? '2 4' : 'none';
   const linecap = 'round';
   const opacity = penStyle === 'highlighter' ? 0.4 : 1;
@@ -189,16 +194,21 @@ const DrawNode = ({ data, selected }: any) => {
 
   return (
     <div className="relative group w-full h-full">
-      {selected && (
+      {selected && !(window as any).__ERASER_ACTIVE__ && (
         <div className="nodrag absolute -top-8 left-1/2 -translate-x-1/2 w-6 h-6 bg-white border border-blue-500 rounded-full flex items-center justify-center cursor-grab active:cursor-grabbing shadow-sm z-50 text-blue-600 hover:bg-blue-50" onMouseDown={onRotateMouseDown}>
           <RotateCw size={12} strokeWidth={3} />
         </div>
       )}
       <div ref={nodeRef} style={{ width: '100%', height: '100%', transform: `rotate(${rotAngle}deg)`, transformOrigin: 'center center' }}>
-        <NodeResizer color="#3b82f6" isVisible={selected} minWidth={10} minHeight={10} handleStyle={{ width: '8px', height: '8px', borderRadius: '2px' }} lineStyle={{ borderWidth: '2px' }} />
+        <NodeResizer color="#3b82f6" isVisible={selected && !(window as any).__ERASER_ACTIVE__} minWidth={10} minHeight={10} handleStyle={{ width: '8px', height: '8px', borderRadius: '2px' }} lineStyle={{ borderWidth: '2px' }} />
         <svg width="100%" height="100%" viewBox={`0 0 ${origW} ${origH}`} preserveAspectRatio="none" style={{ overflow: 'visible' }}>
-          {selected && <rect x="0" y="0" width={origW} height={origH} fill="none" stroke="#3b82f6" strokeWidth="1" strokeDasharray="4" vectorEffect="non-scaling-stroke" />}
-          <path d={d} fill="none" stroke={color} strokeWidth={actualWidth} strokeDasharray={strokeDash} strokeLinecap={linecap} strokeLinejoin="round" opacity={opacity} vectorEffect="non-scaling-stroke" />
+          {selected && !(window as any).__ERASER_ACTIVE__ && <rect x="0" y="0" width={origW} height={origH} fill="none" stroke="#3b82f6" strokeWidth="1" strokeDasharray="4" vectorEffect="non-scaling-stroke" />}
+          
+          {/* Lớp bắt sự kiện xóa (dày và trong suốt để dễ lia trúng gôm) */}
+          <path d={d} stroke="transparent" strokeWidth={actualWidth + 20} fill="none" data-draw-id={id} style={{ pointerEvents: 'stroke' }} />
+          
+          {/* Lớp hiển thị nét vẽ */}
+          <path d={d} fill="none" stroke={color} strokeWidth={actualWidth} strokeDasharray={strokeDash} strokeLinecap={linecap} strokeLinejoin="round" opacity={opacity} vectorEffect="non-scaling-stroke" pointerEvents="none" />
         </svg>
       </div>
     </div>
@@ -272,7 +282,7 @@ const CustomShapeNode = ({ id, data, selected, style }: any) => {
 
   return (
     <div className="relative group w-full h-full" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
-      {selected && (
+      {selected && !(window as any).__ERASER_ACTIVE__ && (
         <div 
           className="nodrag absolute -top-8 left-1/2 -translate-x-1/2 w-6 h-6 bg-white border border-blue-500 rounded-full flex items-center justify-center cursor-grab active:cursor-grabbing shadow-sm z-50 text-blue-600 hover:bg-blue-50"
           onMouseDown={onRotateMouseDown}
@@ -282,7 +292,7 @@ const CustomShapeNode = ({ id, data, selected, style }: any) => {
       )}
 
       <div ref={nodeRef} style={{ width: '100%', height: '100%', transform: `rotate(${rotAngle}deg)`, transformOrigin: 'center center' }}>
-        <NodeResizer color="#3b82f6" isVisible={selected} minWidth={isTransparent ? 20 : 50} minHeight={isTransparent ? 20 : 40} handleStyle={{ width: '8px', height: '8px', borderRadius: '2px' }} lineStyle={{ borderWidth: '2px' }} />
+        <NodeResizer color="#3b82f6" isVisible={selected && !(window as any).__ERASER_ACTIVE__} minWidth={isTransparent ? 20 : 50} minHeight={isTransparent ? 20 : 40} handleStyle={{ width: '8px', height: '8px', borderRadius: '2px' }} lineStyle={{ borderWidth: '2px' }} />
 
         <Handle type="target" position={Position.Top} id="top-t" style={{...handleStyle, top: '-4px'}} />
         <Handle type="source" position={Position.Top} id="top-s" style={{...handleStyle, top: '-4px'}} />
@@ -295,7 +305,7 @@ const CustomShapeNode = ({ id, data, selected, style }: any) => {
         
         <div className="absolute inset-0 z-0 pointer-events-none">
            {shapeType === 'image' && displayUrl && <img src={displayUrl} className="w-full h-full object-contain pointer-events-none p-1" />}
-           <ShapeSvgRenderer type={shapeType} fill={fillColor} stroke={strokeColor} strokeWidth={strokeWidth} selected={selected} />
+           {shapeType !== 'image' && <ShapeSvgRenderer type={shapeType} fill={fillColor} stroke={strokeColor} strokeWidth={strokeWidth} selected={selected} />}
         </div>
 
         <div className={`absolute inset-0 z-10 flex flex-col items-center justify-center p-2 text-[#0f172a] text-xs font-medium text-center ${shapeType === 'actor' ? 'justify-end pb-0' : ''} ${shapeType === 'image' ? 'justify-end -bottom-6 h-auto drop-shadow-md' : ''}`} onDoubleClick={() => setIsEditing(true)}>
@@ -516,9 +526,7 @@ const generateMermaidFromFlow = (nodes: Node[], edges: Edge[]): string => {
   if (nodes.length === 0) return "";
   let mermaidCode = "graph TD;\n";
   nodes.forEach(node => { 
-    // BỎ QUA DRAWNODE KHI XUẤT RA MERMAID CODE
     if (node.type === 'drawNode') return;
-
     const label = node.data.label || node.id;
     const shape = node.data.shapeType || 'rectangle';
     const rot = node.data.rotation || 0;
@@ -593,13 +601,19 @@ const IDEPageContent = () => {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const transform = useStore((state) => state.transform);
 
   // --- ART MODE (DRAWING) STATE ---
   const [isDrawingMode, setIsDrawingMode] = useState<boolean>(false);
+  const [drawTool, setDrawTool] = useState<'pen' | 'eraser'>('pen');
   const [drawColor, setDrawColor] = useState<string>("#3b82f6");
   const [drawWidth, setDrawWidth] = useState<number>(3);
-  const [drawStyle, setDrawStyle] = useState<string>('solid'); // solid, dashed, highlighter
+  const [drawStyle, setDrawStyle] = useState<string>('solid'); 
   const [currentDrawPath, setCurrentDrawPath] = useState<{x: number, y: number}[] | null>(null);
+
+  useEffect(() => {
+    (window as any).__ERASER_ACTIVE__ = (isDrawingMode && drawTool === 'eraser');
+  }, [isDrawingMode, drawTool]);
 
   const updateCodeFromFlow = useCallback((currentNodes: Node[], currentEdges: Edge[]) => {
     setCode(generateMermaidFromFlow(currentNodes, currentEdges));
@@ -668,10 +682,9 @@ const IDEPageContent = () => {
     setActiveCustomShape(null);
   };
 
-
   useEffect(() => {
-    const nodeHandler = (e: any) => { updateCodeFromFlow(e.detail.nodes, edges); };
-    const edgeHandler = (e: any) => { updateCodeFromFlow(nodes, e.detail.edges); };
+    const nodeHandler = (e: any) => { updateCodeFromFlow(e.detail.nodes || nodes, edges); };
+    const edgeHandler = (e: any) => { updateCodeFromFlow(nodes, e.detail.edges || edges); };
     window.addEventListener('mermaid-rebuild', nodeHandler);
     window.addEventListener('mermaid-rebuild-edge', edgeHandler);
     return () => {
@@ -683,7 +696,6 @@ const IDEPageContent = () => {
   const handleSyncCodeToDiagram = useCallback(() => {
     try {
       const parsedData = parseMermaid(code);
-      // GIỮ LẠI CÁC NET VẼ KHI SYNC
       setNodes(currentNodes => {
         const drawings = currentNodes.filter(n => n.type === 'drawNode');
         return [...parsedData.nodes, ...drawings];
@@ -741,21 +753,53 @@ const IDEPageContent = () => {
     }
   }, [screenToFlowPosition]);
 
-  // --- ART MODE DRAWING EVENTS ---
-  const onPaneMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!isDrawingMode) return;
+  const handleCanvasMouseMove = useCallback((e: React.MouseEvent) => {
+    if (isDrawingMode && drawTool === 'eraser' && e.buttons === 1) {
+       const el = document.elementFromPoint(e.clientX, e.clientY);
+       if (el && el.tagName.toLowerCase() === 'path') {
+          const drawNodeId = el.getAttribute('data-draw-id');
+          if (drawNodeId) {
+             setNodes((nds) => {
+               const newNds = nds.filter(n => n.id !== drawNodeId);
+               setTimeout(() => window.dispatchEvent(new CustomEvent('mermaid-rebuild', { detail: { nodes: newNds } })), 0);
+               return newNds;
+             });
+          }
+       }
+    }
+  }, [isDrawingMode, drawTool, setNodes]);
+
+  const handleCanvasMouseClick = useCallback((e: React.MouseEvent) => {
+    if (isDrawingMode && drawTool === 'eraser') {
+       const el = document.elementFromPoint(e.clientX, e.clientY);
+       if (el && el.tagName.toLowerCase() === 'path') {
+          const drawNodeId = el.getAttribute('data-draw-id');
+          if (drawNodeId) {
+             setNodes((nds) => {
+               const newNds = nds.filter(n => n.id !== drawNodeId);
+               setTimeout(() => window.dispatchEvent(new CustomEvent('mermaid-rebuild', { detail: { nodes: newNds } })), 0);
+               return newNds;
+             });
+          }
+       }
+    }
+  }, [isDrawingMode, drawTool, setNodes]);
+
+  // --- ART MODE DRAWING EVENTS LẮNG NGHE TỪ OVERLAY ---
+  const handleDrawStart = useCallback((e: React.PointerEvent) => {
+    if (!isDrawingMode || drawTool !== 'pen') return;
     const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
     setCurrentDrawPath([pos]);
-  }, [isDrawingMode, screenToFlowPosition]);
+  }, [isDrawingMode, drawTool, screenToFlowPosition]);
 
-  const onPaneMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!isDrawingMode || !currentDrawPath) return;
+  const handleDrawMove = useCallback((e: React.PointerEvent) => {
+    if (!isDrawingMode || drawTool !== 'pen' || !currentDrawPath) return;
     const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
     setCurrentDrawPath((prev) => prev ? [...prev, pos] : [pos]);
-  }, [isDrawingMode, currentDrawPath, screenToFlowPosition]);
+  }, [isDrawingMode, drawTool, currentDrawPath, screenToFlowPosition]);
 
-  const onPaneMouseUp = useCallback(() => {
-    if (!isDrawingMode || !currentDrawPath || currentDrawPath.length < 2) {
+  const handleDrawEnd = useCallback(() => {
+    if (!isDrawingMode || drawTool !== 'pen' || !currentDrawPath || currentDrawPath.length < 2) {
       setCurrentDrawPath(null);
       return;
     }
@@ -780,7 +824,7 @@ const IDEPageContent = () => {
 
     setNodes(nds => [...nds, newNode]);
     setCurrentDrawPath(null);
-  }, [isDrawingMode, currentDrawPath, drawColor, drawWidth, drawStyle, setNodes]);
+  }, [isDrawingMode, drawTool, currentDrawPath, drawColor, drawWidth, drawStyle, setNodes]);
 
 
   const onDragStart = (event: React.DragEvent, shapeType: string, defaultLabel: string, imageUrl?: string) => {
@@ -1042,9 +1086,12 @@ const IDEPageContent = () => {
     monacoRef.current = { editor, monaco };
   };
 
+  const eraserCursorUrl = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M20 20H7L3 16C2.5 15.5 2.5 14.5 3 14L13 4L20 11L11 20'/><path d='M6 11L13 18'/></svg>";
+
   return (
     <div className={`flex flex-col h-screen w-full ${theme.bgMain} ${theme.text} font-sans overflow-hidden transition-colors duration-200`} onClick={closeContextMenu}>
       
+      {/* SHAPE TOOLTIP PORTAL */}
       {hoveredShape && (
         <div 
           className={`fixed z-[9999] text-xs rounded-md shadow-2xl p-3 w-48 pointer-events-none transform -translate-x-full -translate-y-1/2 transition-opacity ${isDarkMode ? 'bg-[#252526] text-white border border-[#4b4b4b]' : 'bg-white text-slate-800 border border-slate-300'}`}
@@ -1061,6 +1108,7 @@ const IDEPageContent = () => {
         </div>
       )}
 
+      {/* CONTEXT MENU */}
       {contextMenu && (
         <div style={{ top: contextMenu.top, left: contextMenu.left }} className="fixed z-[100] bg-white border border-slate-200 shadow-xl rounded-md py-1 w-36 text-sm">
           <button onClick={handleEditItem} className="w-full text-left px-4 py-2 hover:bg-slate-100 text-slate-700 transition">Edit text</button>
@@ -1136,8 +1184,27 @@ const IDEPageContent = () => {
 
           <div className={`w-1 cursor-col-resize hover:bg-blue-500 active:bg-blue-600 transition-colors z-10 ${theme.border} border-l`} onMouseDown={() => setIsDraggingEditor(true)} />
 
-          <div className="flex-1 relative bg-slate-50 min-w-[200px] flex flex-col" ref={reactFlowWrapper}>
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 px-3 py-1.5 bg-white rounded-full shadow-lg border border-slate-200 text-slate-700">
+          <div 
+             className="flex-1 relative bg-slate-50 min-w-[200px] flex flex-col" 
+             ref={reactFlowWrapper}
+             style={{ cursor: isDrawingMode && drawTool === 'eraser' ? `url("${eraserCursorUrl}") 0 24, auto` : 'default' }}
+             onMouseMove={handleCanvasMouseMove}
+             onMouseDown={handleCanvasMouseClick}
+          >
+            {/* LỚP PHỦ VẼ TAY (Chỉ hiện khi đang cầm Bút) */}
+            {isDrawingMode && drawTool === 'pen' && (
+              <div
+                className="absolute inset-0 z-[49]"
+                style={{ cursor: 'crosshair', touchAction: 'none' }}
+                onPointerDown={handleDrawStart}
+                onPointerMove={handleDrawMove}
+                onPointerUp={handleDrawEnd}
+                onPointerLeave={handleDrawEnd}
+              />
+            )}
+
+            {/* ART MODE FLOATING TOOLBAR */}
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-3 py-1.5 bg-white rounded-full shadow-lg border border-slate-200 text-slate-700">
               <button onClick={handleSyncCodeToDiagram} className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-full transition shadow-sm" title="Manual Sync Text to Diagram">
                 <Play size={14} /> <span className="hidden xl:inline">Sync Code to Visual</span>
               </button>
@@ -1146,29 +1213,33 @@ const IDEPageContent = () => {
                 <Wand2 size={14} /> <span className="hidden xl:inline">Auto Layout</span>
               </button>
               
-              {/* ART MODE TOGGLE */}
               <div className="w-px h-5 bg-slate-300 mx-1"></div>
               <button onClick={() => setIsDrawingMode(!isDrawingMode)} className={`flex items-center gap-1.5 px-3 py-1 text-sm font-medium rounded-full transition ${isDrawingMode ? 'bg-purple-100 text-purple-700' : 'text-slate-700 hover:text-blue-600 hover:bg-blue-50'}`} title="Art Mode (Freehand Drawing)">
-                {isDrawingMode ? <Eraser size={14} /> : <PenTool size={14} />} <span className="hidden xl:inline">{isDrawingMode ? 'Exit Art Mode' : 'Art Mode'}</span>
+                {isDrawingMode ? <X size={14} /> : <PenTool size={14} />} <span className="hidden xl:inline">{isDrawingMode ? 'Exit Art Mode' : 'Art Mode'}</span>
               </button>
             </div>
 
             {/* ART MODE OPTIONS PANEL */}
             {isDrawingMode && (
-              <div className="absolute top-16 left-1/2 -translate-x-1/2 z-10 flex items-center gap-3 px-4 py-2 bg-white rounded-full shadow border border-slate-200">
-                 <div className="flex gap-1">
+              <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2 bg-white rounded-full shadow border border-slate-200">
+                 <div className="flex gap-2 mr-2 border-r border-slate-300 pr-3">
+                   <button onClick={() => setDrawTool('pen')} className={`p-1.5 rounded transition ${drawTool === 'pen' ? 'bg-blue-100 text-blue-600' : 'hover:bg-slate-100 text-slate-600'}`} title="Pen Tool"><PenTool size={16} /></button>
+                   <button onClick={() => setDrawTool('eraser')} className={`p-1.5 rounded transition ${drawTool === 'eraser' ? 'bg-red-100 text-red-600' : 'hover:bg-slate-100 text-slate-600'}`} title="Eraser Tool (Click drawn paths to remove)"><Eraser size={16} /></button>
+                 </div>
+                 
+                 <div className={`flex gap-1 ${drawTool === 'eraser' ? 'opacity-30 pointer-events-none' : ''}`}>
                    {['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#a855f7', '#0f172a', '#ffffff'].map(color => (
-                     <button key={color} onClick={() => setDrawColor(color)} className={`w-5 h-5 rounded-full border border-slate-200 transition-transform ${drawColor === color ? 'scale-125 ring-2 ring-blue-300' : 'hover:scale-110'}`} style={{backgroundColor: color}} />
+                     <button key={color} onClick={() => setDrawColor(color)} className={`w-5 h-5 rounded-full border border-slate-300 transition-transform ${drawColor === color ? 'scale-125 ring-2 ring-blue-300' : 'hover:scale-110'}`} style={{backgroundColor: color}} />
                    ))}
                  </div>
                  <div className="w-px h-4 bg-slate-300 mx-1"></div>
-                 <select value={drawWidth} onChange={(e) => setDrawWidth(Number(e.target.value))} className="text-xs bg-slate-50 border border-slate-200 rounded px-1 py-0.5 outline-none">
+                 <select disabled={drawTool === 'eraser'} value={drawWidth} onChange={(e) => setDrawWidth(Number(e.target.value))} className="text-xs bg-slate-50 border border-slate-200 rounded px-1 py-0.5 outline-none">
                    <option value={1}>1px</option>
                    <option value={3}>3px</option>
                    <option value={5}>5px</option>
                    <option value={10}>10px</option>
                  </select>
-                 <select value={drawStyle} onChange={(e) => setDrawStyle(e.target.value)} className="text-xs bg-slate-50 border border-slate-200 rounded px-1 py-0.5 outline-none">
+                 <select disabled={drawTool === 'eraser'} value={drawStyle} onChange={(e) => setDrawStyle(e.target.value)} className="text-xs bg-slate-50 border border-slate-200 rounded px-1 py-0.5 outline-none">
                    <option value="solid">Pen</option>
                    <option value="dashed">Dashed</option>
                    <option value="highlighter">Highlighter</option>
@@ -1183,7 +1254,7 @@ const IDEPageContent = () => {
 
             <div className={`absolute top-4 left-4 z-10 px-2 py-1 text-xs font-medium rounded-md shadow border ${theme.border} ${theme.bgMain} ${theme.text}`}>{(zoomLevel * 100).toFixed(0)}%</div>
             
-            <div className="flex-1 w-full h-full" onPointerMove={handleCanvasPointerMove}>
+            <div className="flex-1 w-full h-full" onPointerMove={handleCanvasPointerMove} onMouseUp={handleCanvasMouseUp}>
               <ReactFlow 
                 nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
                 onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} 
@@ -1192,34 +1263,29 @@ const IDEPageContent = () => {
                 onDrop={onDrop} onDragOver={onDragOver} onNodeContextMenu={onNodeContextMenu} 
                 onEdgeContextMenu={onEdgeContextMenu} onPaneClick={closeContextMenu}
                 
-                // ART MODE MOUSE EVENTS
-                onMouseDown={onPaneMouseDown}
-                onMouseMove={onPaneMouseMove}
-                onMouseUp={onPaneMouseUp}
-                
-                // KHOÁ KÉO THẢ KHI ĐANG VẼ
                 nodesDraggable={!isDrawingMode}
                 nodesConnectable={!isDrawingMode}
                 elementsSelectable={!isDrawingMode}
                 panOnDrag={!isDrawingMode}
-
                 panActivationKeyCode={null} 
                 fitView
               >
                 <Background color="#cbd5e1" gap={16} />
                 <Controls position="bottom-left" className="bg-white border-slate-200 fill-slate-600 mb-4 ml-4 shadow-sm rounded-md" />
                 
-                {/* HIỂN THỊ NÉT VẼ TẠM THỜI TRỰC TIẾP TRONG FLOW ĐỂ CHUẨN ZOOM/PAN */}
+                {/* HIỂN THỊ NÉT VẼ TẠM THỜI ĐƯỢC ĐỒNG BỘ ZOOM THEO VIEWPORT */}
                 {currentDrawPath && currentDrawPath.length > 0 && (
                   <svg className="absolute inset-0 w-full h-full pointer-events-none z-[100]" style={{ overflow: 'visible' }}>
-                    <path 
-                       d={`M ${currentDrawPath[0].x} ${currentDrawPath[0].y} ` + currentDrawPath.map(p => `L ${p.x} ${p.y}`).join(' ')} 
-                       fill="none" stroke={drawColor} 
-                       strokeWidth={drawStyle === 'highlighter' ? drawWidth * 3 : drawWidth} 
-                       strokeDasharray={drawStyle === 'dashed' ? '8 8' : 'none'} 
-                       strokeLinecap="round" strokeLinejoin="round" 
-                       opacity={drawStyle === 'highlighter' ? 0.4 : 1} 
-                    />
+                    <g transform={`translate(${transform[0]}, ${transform[1]}) scale(${transform[2]})`}>
+                      <path 
+                         d={`M ${currentDrawPath[0].x} ${currentDrawPath[0].y} ` + currentDrawPath.map(p => `L ${p.x} ${p.y}`).join(' ')} 
+                         fill="none" stroke={drawColor} 
+                         strokeWidth={drawStyle === 'highlighter' ? drawWidth * 3 : drawWidth} 
+                         strokeDasharray={drawStyle === 'dashed' ? '8 8' : 'none'} 
+                         strokeLinecap="round" strokeLinejoin="round" 
+                         opacity={drawStyle === 'highlighter' ? 0.4 : 1} 
+                      />
+                    </g>
                   </svg>
                 )}
 
