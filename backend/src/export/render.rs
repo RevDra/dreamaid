@@ -64,9 +64,12 @@ fn parse(content: &str) -> (HashMap<String, Node>, Vec<Edge>) {
             if let Some(ap) = t.find(sep) {
                 let from_s = t[..ap].trim();
                 let rest = t[ap + sep.len()..].trim();
-                let (lbl, to_s) = if rest.starts_with('|') {
-                    if let Some(end) = rest[1..].find('|') {
-                        (Some(rest[1..end + 1].to_string()), rest[end + 2..].trim())
+                let (lbl, to_s) = if let Some(labelled_rest) = rest.strip_prefix('|') {
+                    if let Some(end) = labelled_rest.find('|') {
+                        (
+                            Some(labelled_rest[..end].to_string()),
+                            labelled_rest[end + 1..].trim(),
+                        )
                     } else {
                         (None, rest)
                     }

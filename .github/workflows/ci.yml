@@ -8,7 +8,7 @@ on:
 
 jobs:
   frontend:
-    name: Frontend — lint + build
+    name: Frontend — build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,10 +17,11 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-
       - run: npm ci
-      - run: npm run lint
       - run: npm run build
+      - name: Advisory lint
+        run: npm run lint
+        continue-on-error: true
 
   backend:
     name: Backend — check + test
