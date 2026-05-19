@@ -2,6 +2,8 @@ import { Eraser, PenTool, Play, Wand2 } from "lucide-react";
 
 interface CanvasActionBarProps {
   isDrawingMode: boolean;
+  canEditCanvas?: boolean;
+  canSyncCodeToDiagram?: boolean;
   onSyncCodeToDiagram: () => void;
   onAutoLayout: () => void;
   onToggleDrawingMode: () => void;
@@ -9,19 +11,35 @@ interface CanvasActionBarProps {
 
 export default function CanvasActionBar({
   isDrawingMode,
+  canEditCanvas = true,
+  canSyncCodeToDiagram = true,
   onSyncCodeToDiagram,
   onAutoLayout,
   onToggleDrawingMode,
 }: CanvasActionBarProps) {
   return (
     <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 px-3 py-1.5 bg-white rounded-full shadow-lg border border-slate-200 text-slate-700">
-      <button onClick={onSyncCodeToDiagram} className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-full transition shadow-sm" title="Manual Sync Text to Diagram">
+      <button
+        onClick={onSyncCodeToDiagram}
+        disabled={!canSyncCodeToDiagram}
+        className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium shadow-sm transition ${
+          canSyncCodeToDiagram ? "bg-blue-600 text-white hover:bg-blue-700" : "cursor-not-allowed bg-slate-200 text-slate-400"
+        }`}
+        title={canSyncCodeToDiagram ? "Manual Sync Text to Diagram" : "Sync is only available for Mermaid diagrams"}
+      >
         <Play size={14} /> <span className="hidden xl:inline">Sync Code to Visual</span>
       </button>
 
       <div className="w-px h-5 bg-slate-300 mx-1"></div>
 
-      <button onClick={onAutoLayout} className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-full transition" title="Auto Layout Diagram">
+      <button
+        onClick={onAutoLayout}
+        disabled={!canEditCanvas}
+        className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium transition ${
+          canEditCanvas ? "text-slate-700 hover:bg-blue-50 hover:text-blue-600" : "cursor-not-allowed text-slate-400"
+        }`}
+        title={canEditCanvas ? "Auto Layout Diagram" : "Canvas actions are only available for Mermaid diagrams"}
+      >
         <Wand2 size={14} /> <span className="hidden xl:inline">Auto Layout</span>
       </button>
 
@@ -29,8 +47,15 @@ export default function CanvasActionBar({
 
       <button
         onClick={onToggleDrawingMode}
-        className={`flex items-center gap-1.5 px-3 py-1 text-sm font-medium rounded-full transition ${isDrawingMode ? "bg-purple-100 text-purple-700" : "text-slate-700 hover:text-blue-600 hover:bg-blue-50"}`}
-        title="Art Mode (Freehand Drawing)"
+        disabled={!canEditCanvas}
+        className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium transition ${
+          !canEditCanvas
+            ? "cursor-not-allowed text-slate-400"
+            : isDrawingMode
+              ? "bg-purple-100 text-purple-700"
+              : "text-slate-700 hover:bg-blue-50 hover:text-blue-600"
+        }`}
+        title={canEditCanvas ? "Art Mode (Freehand Drawing)" : "Canvas actions are only available for Mermaid diagrams"}
       >
         {isDrawingMode ? <Eraser size={14} /> : <PenTool size={14} />} <span className="hidden xl:inline">{isDrawingMode ? "Exit Art Mode" : "Art Mode"}</span>
       </button>

@@ -100,7 +100,7 @@ Migrations chạy tự động lúc startup (`sqlx::migrate!("./migrations")`). 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **UBA** (41 symbols, 57 relationships, 1 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **UBA_Unified-Business-Analytics** (378 symbols, 693 relationships, 17 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -116,7 +116,7 @@ This project is indexed by GitNexus as **UBA** (41 symbols, 57 relationships, 1 
 
 1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
 2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/UBA/process/{processName}` — trace the full execution flow step by step
+3. `READ gitnexus://repo/UBA_Unified-Business-Analytics/process/{processName}` — trace the full execution flow step by step
 4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
 
 ## When Refactoring
@@ -155,10 +155,10 @@ This project is indexed by GitNexus as **UBA** (41 symbols, 57 relationships, 1 
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/UBA/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/UBA/clusters` | All functional areas |
-| `gitnexus://repo/UBA/processes` | All execution flows |
-| `gitnexus://repo/UBA/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/UBA_Unified-Business-Analytics/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/UBA_Unified-Business-Analytics/clusters` | All functional areas |
+| `gitnexus://repo/UBA_Unified-Business-Analytics/processes` | All execution flows |
+| `gitnexus://repo/UBA_Unified-Business-Analytics/process/{name}` | Step-by-step execution trace |
 
 ## Self-Check Before Finishing
 

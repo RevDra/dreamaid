@@ -40,9 +40,21 @@ import {
 } from "lucide-react";
 import * as api from "../lib/api";
 import CanvasActionBar from "../components/workbench/CanvasActionBar";
+import TopLeftToolbar from "../components/workbench/TopLeftToolbar";
 import TopRightCommandBar from "../components/workbench/TopRightCommandBar";
 import WorkspaceTopBar from "../components/workbench/WorkspaceTopBar";
-import type { SaveState, WorkspaceTheme } from "../lib/workspace/action-types";
+import type {
+  RecentWorkspaceEntry,
+  SaveState,
+  WorkspaceArtifactKind,
+  WorkspaceCapability,
+  WorkspaceSource,
+  WorkspaceTheme,
+} from "../lib/workspace/action-types";
+import { browserWorkspaceFileSystem, type WorkspaceFileEntry, type WorkspaceFolderHandle } from "../lib/workspace/fs-adapter";
+import { detectWorkspaceCapability } from "../lib/workspace/fs-capabilities";
+import { ARTIFACT_TEMPLATES, QUICK_INSERT_ACTIONS } from "../lib/workspace/top-left-toolbar-config";
+import { buildWorkspaceSnapshot } from "../lib/workspace/workspace-context";
 
 // --- QUẢN LÝ ẢNH UPLOAD ---
 const globalImageRegistry: Record<string, string> = {};
@@ -564,6 +576,84 @@ interface PersistedDiagramSnapshot {
   id: string | null;
   title: string;
   code: string;
+  drawings?: string;
+}
+
+interface LocalDraftSnapshot {
+  diagramId: string | null;
+  diagramTitle: string;
+  code: string;
+  drawingNodes: Node[];
+  source: WorkspaceSource;
+  artifactKind: WorkspaceArtifactKind;
+  workspaceRoot: string | null;
+  currentFilePath: string | null;
+  updatedAt: number;
+}
+
+const LOCAL_DRAFT_STORAGE_KEY = "ba_workbench_local_draft_v1";
+const RECENT_WORKSPACES_STORAGE_KEY = "ba_workbench_recent_workspaces_v1";
+
+function getArtifactFileName(kind: WorkspaceArtifactKind): string {
+  if (kind === "requirements-note") {
+    return "requirements-note.md";
+  }
+
+  if (kind === "ba-brief") {
+    return "ba-brief.md";
+  }
+
+  if (kind === "json") {
+    return "artifact.json";
+  }
+
+  if (kind === "other") {
+    return "artifact.txt";
+  }
+
+  return "diagram.mmd";
+}
+
+function getArtifactLabel(kind: WorkspaceArtifactKind): string {
+  if (kind === "requirements-note") {
+    return "Requirements note";
+  }
+
+  if (kind === "ba-brief") {
+    return "BA brief";
+  }
+
+  if (kind === "json") {
+    return "JSON artifact";
+  }
+
+  if (kind === "other") {
+    return "Text artifact";
+  }
+
+  return "Process map";
+}
+
+function getDocumentHint(source: WorkspaceSource, kind: WorkspaceArtifactKind): string {
+  const baseLabel = getArtifactLabel(kind);
+
+  if (source === "remote") {
+    return `Cloud ${baseLabel}`;
+  }
+
+  if (source === "local") {
+    return `Local ${baseLabel}`;
+  }
+
+  return `Draft ${baseLabel}`;
+}
+
+function stripFileExtension(fileName: string): string {
+  return fileName.replace(/\.[^.]+$/, "");
+}
+
+function getDrawingNodeSnapshot(nodes: Node[]): string {
+  return JSON.stringify(nodes.filter((node) => node.type === "drawNode"));
 }
 
 // --- NỘI DUNG IDE CHÍNH ---
@@ -620,6 +710,16 @@ const IDEPageContent = () => {
   const [shareModal, setShareModal] = useState<api.ShareLinkResponse | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [persistedDiagram, setPersistedDiagram] = useState<PersistedDiagramSnapshot | null>(null);
+  const [workspaceCapability, setWorkspaceCapability] = useState<WorkspaceCapability>(() => detectWorkspaceCapability());
+  const [workspaceSource, setWorkspaceSource] = useState<WorkspaceSource>("draft");
+  const [currentArtifactKind, setCurrentArtifactKind] = useState<WorkspaceArtifactKind>("diagram");
+  const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
+  const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
+  const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileEntry[]>([]);
+  const [recentWorkspaces, setRecentWorkspaces] = useState<RecentWorkspaceEntry[]>([]);
+  const [hasRestorableDraft, setHasRestorableDraft] = useState<boolean>(false);
+  const [activeWorkspaceHandle, setActiveWorkspaceHandle] = useState<WorkspaceFolderHandle | null>(null);
+  const [currentLocalFile, setCurrentLocalFile] = useState<WorkspaceFileEntry | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
@@ -637,9 +737,18 @@ const IDEPageContent = () => {
     if (monacoRef.current) monacoRef.current.monaco.editor.setModelMarkers(monacoRef.current.editor.getModel(), "mermaid", []);
   }, []);
 
+  const drawingNodesSnapshot = getDrawingNodeSnapshot(nodes);
+  const hasFreehandDrawings = nodes.some((node) => node.type === "drawNode");
+  const isLocalArtifact = workspaceSource === "local";
+
   const hasUnsavedChanges = persistedDiagram
-    ? persistedDiagram.id !== currentDiagramId || persistedDiagram.title !== diagramTitle || persistedDiagram.code !== code
-    : diagramTitle !== DEFAULT_DIAGRAM_TITLE || code !== DEFAULT_MERMAID_CODE;
+    ? persistedDiagram.id !== currentDiagramId
+      || (!isLocalArtifact && persistedDiagram.title !== diagramTitle)
+      || persistedDiagram.code !== code
+      || (persistedDiagram.drawings ?? "") !== drawingNodesSnapshot
+    : (!isLocalArtifact && diagramTitle !== DEFAULT_DIAGRAM_TITLE)
+      || code !== DEFAULT_MERMAID_CODE
+      || drawingNodesSnapshot !== getDrawingNodeSnapshot([]);
 
   const effectiveSaveState: SaveState = saveState === "saving" || saveState === "error"
     ? saveState
@@ -671,6 +780,216 @@ const IDEPageContent = () => {
     setPersistedDiagram(diagram);
     setSaveState("saved");
   }, []);
+
+  const clearStoredLocalDraft = useCallback(() => {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.removeItem(LOCAL_DRAFT_STORAGE_KEY);
+        setHasRestorableDraft(false);
+      } catch (error) {
+        console.warn("Failed to clear the stale local draft snapshot.", error);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    setWorkspaceCapability(detectWorkspaceCapability());
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const storedDraft = localStorage.getItem(LOCAL_DRAFT_STORAGE_KEY);
+      setHasRestorableDraft(Boolean(storedDraft));
+
+      const storedRecentWorkspaces = localStorage.getItem(RECENT_WORKSPACES_STORAGE_KEY);
+      if (storedRecentWorkspaces) {
+        setRecentWorkspaces(JSON.parse(storedRecentWorkspaces) as RecentWorkspaceEntry[]);
+      }
+    } catch (error) {
+      console.warn("Failed to restore local workspace metadata.", error);
+    }
+  }, []);
+
+  const rememberWorkspace = useCallback((entry: RecentWorkspaceEntry) => {
+    setRecentWorkspaces((currentEntries) => {
+      const nextEntries = [entry, ...currentEntries.filter((currentEntry) => currentEntry.key !== entry.key)].slice(0, 5);
+
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem(RECENT_WORKSPACES_STORAGE_KEY, JSON.stringify(nextEntries));
+        } catch (error) {
+          console.warn("Failed to persist recent workspaces.", error);
+        }
+      }
+
+      return nextEntries;
+    });
+  }, []);
+
+  const confirmReplaceCurrentDocument = useCallback(() => {
+    if (!hasUnsavedChanges) {
+      return true;
+    }
+
+    return confirm("Discard the current unsaved changes and open another artifact?");
+  }, [hasUnsavedChanges]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      return undefined;
+    }
+
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const draftToPersist: LocalDraftSnapshot = {
+      diagramId: currentDiagramId,
+      diagramTitle,
+      code,
+      drawingNodes: nodes.filter((node) => node.type === "drawNode"),
+      source: workspaceSource,
+      artifactKind: currentArtifactKind,
+      workspaceRoot,
+      currentFilePath,
+      updatedAt: Date.now(),
+    };
+
+    const persistTimer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(LOCAL_DRAFT_STORAGE_KEY, JSON.stringify(draftToPersist));
+        setHasRestorableDraft(true);
+      } catch (error) {
+        console.warn("Failed to persist the local draft snapshot.", error);
+      }
+    }, 300);
+
+    return () => window.clearTimeout(persistTimer);
+  }, [code, currentArtifactKind, currentDiagramId, currentFilePath, diagramTitle, hasUnsavedChanges, nodes, workspaceRoot, workspaceSource]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges) {
+        return;
+      }
+
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedChanges]);
+
+  const clearEditorMarkers = useCallback(() => {
+    if (monacoRef.current) {
+      monacoRef.current.monaco.editor.setModelMarkers(monacoRef.current.editor.getModel(), "mermaid", []);
+    }
+  }, []);
+
+  const syncWorkspaceContent = useCallback(
+    (
+      nextCode: string,
+      nextArtifactKind: WorkspaceArtifactKind,
+      options?: { preserveDrawings?: boolean }
+    ) => {
+      if (nextArtifactKind !== "diagram") {
+        setNodes([]);
+        setEdges([]);
+        setParseError(null);
+        clearEditorMarkers();
+        return;
+      }
+
+      try {
+        const parsedData = parseMermaid(nextCode);
+        setNodes((currentNodes) => {
+          if (options?.preserveDrawings) {
+            const drawings = currentNodes.filter((node) => node.type === "drawNode");
+            return [...parsedData.nodes, ...drawings];
+          }
+
+          return parsedData.nodes;
+        });
+        setEdges(parsedData.edges);
+        setParseError(null);
+        clearEditorMarkers();
+      } catch (error) {
+        const parseFailure = error as { line?: number; message?: string; lineText?: string };
+
+        if (options?.preserveDrawings) {
+          setNodes((currentNodes) => currentNodes.filter((node) => node.type === "drawNode"));
+        } else {
+          setNodes([]);
+        }
+        setEdges([]);
+        setParseError({
+          line: parseFailure.line ?? 1,
+          message: parseFailure.message ?? "Invalid Mermaid syntax.",
+          lineText: parseFailure.lineText ?? "",
+        });
+        setIsTerminalOpen(true);
+
+        if (monacoRef.current && parseFailure.line) {
+          monacoRef.current.monaco.editor.setModelMarkers(monacoRef.current.editor.getModel(), "mermaid", [
+            {
+              startLineNumber: parseFailure.line,
+              startColumn: 1,
+              endLineNumber: parseFailure.line,
+              endColumn: (parseFailure.lineText?.length ?? 0) + 1,
+              message: parseFailure.message ?? "Invalid Mermaid syntax.",
+              severity: monacoRef.current.monaco.MarkerSeverity.Error,
+            },
+          ]);
+        }
+      }
+    },
+    [clearEditorMarkers]
+  );
+
+  const loadWorkspaceDocument = useCallback(
+    (input: {
+      title: string;
+      content: string;
+      diagramId?: string | null;
+      source: WorkspaceSource;
+      artifactKind: WorkspaceArtifactKind;
+      filePath?: string | null;
+      workspaceRoot?: string | null;
+      localFile?: WorkspaceFileEntry | null;
+      drawingNodes?: Node[];
+      persisted?: PersistedDiagramSnapshot | null;
+    }) => {
+      setDiagramTitle(input.title);
+      setCode(input.content);
+      setCurrentDiagramId(input.diagramId ?? null);
+      setWorkspaceSource(input.source);
+      setCurrentArtifactKind(input.artifactKind);
+      setCurrentFilePath(input.filePath ?? null);
+      setCurrentLocalFile(input.localFile ?? null);
+      setWorkspaceRoot(input.workspaceRoot ?? null);
+      setIsDrawingMode(false);
+      setIsTabOpen(true);
+
+      if (input.persisted) {
+        markDiagramPersisted(input.persisted);
+      } else {
+        setPersistedDiagram(null);
+        setSaveState("idle");
+      }
+
+      syncWorkspaceContent(input.content, input.artifactKind);
+
+      const restoredDrawings = input.drawingNodes ?? [];
+
+      if (input.artifactKind === "diagram" && restoredDrawings.length > 0) {
+        setNodes((currentNodes) => [...currentNodes, ...restoredDrawings]);
+      }
+    },
+    [markDiagramPersisted, syncWorkspaceContent]
+  );
 
   useEffect(() => {
     try {
@@ -746,38 +1065,20 @@ const IDEPageContent = () => {
   }, [nodes, edges, updateCodeFromFlow]);
 
   const handleSyncCodeToDiagram = useCallback(() => {
-    try {
-      const parsedData = parseMermaid(code);
-      // GIỮ LẠI CÁC NET VẼ KHI SYNC
-      setNodes(currentNodes => {
-        const drawings = currentNodes.filter(n => n.type === 'drawNode');
-        return [...parsedData.nodes, ...drawings];
-      });
-      setEdges([...parsedData.edges]);
-      
-      setParseError(null);
-      if (monacoRef.current) {
-        monacoRef.current.monaco.editor.setModelMarkers(monacoRef.current.editor.getModel(), "mermaid", []);
-      }
-    } catch (err: any) { 
-      setParseError(err);
-      setIsTerminalOpen(true);
-      if (monacoRef.current && err.line) {
-        monacoRef.current.monaco.editor.setModelMarkers(monacoRef.current.editor.getModel(), "mermaid", [{
-          startLineNumber: err.line, startColumn: 1, endLineNumber: err.line, endColumn: err.lineText.length + 1,
-          message: err.message, severity: monacoRef.current.monaco.MarkerSeverity.Error
-        }]);
-      }
-    }
-  }, [code]);
+    syncWorkspaceContent(code, currentArtifactKind, { preserveDrawings: true });
+  }, [code, currentArtifactKind, syncWorkspaceContent]);
 
   useEffect(() => { handleSyncCodeToDiagram(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAutoLayout = useCallback(() => {
+    if (currentArtifactKind !== "diagram") {
+      return;
+    }
+
     const layoutedNodes = autoLayoutElements(nodes, edges);
     setNodes(layoutedNodes);
     setCode(generateMermaidFromFlow(layoutedNodes, edges));
-  }, [nodes, edges]);
+  }, [currentArtifactKind, nodes, edges]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds)), []);
   const onEdgesChange = useCallback((changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)), []);
@@ -857,6 +1158,11 @@ const IDEPageContent = () => {
   const onDragOver = useCallback((event: React.DragEvent) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }, []);
   
   const addNodeToCanvas = useCallback((type: string, label: string, position: {x: number, y: number}, imageUrl?: string) => {
+    if (currentArtifactKind !== "diagram") {
+      alert("Canvas node insertion is only available while editing a Mermaid diagram.");
+      return;
+    }
+
     const uniqueId = Date.now().toString().slice(-4);
     const newNodeId = `node_${type}_${uniqueId}`;
     
@@ -875,7 +1181,7 @@ const IDEPageContent = () => {
     };
     const newNodes = nodes.concat(newNode);
     setNodes(newNodes); updateCodeFromFlow(newNodes, edges);
-  }, [nodes, edges, updateCodeFromFlow]);
+  }, [currentArtifactKind, nodes, edges, updateCodeFromFlow]);
 
   const onDrop = useCallback((event: React.DragEvent) => {
       event.preventDefault();
@@ -980,11 +1286,33 @@ const IDEPageContent = () => {
       if (currentDiagramId) {
         await api.updateDiagram(currentDiagramId, { title: diagramTitle, content: code });
         markDiagramPersisted({ id: currentDiagramId, title: diagramTitle, code });
+        clearStoredLocalDraft();
+        rememberWorkspace({
+          key: `remote:${currentDiagramId}`,
+          diagramId: currentDiagramId,
+          title: diagramTitle,
+          source: "remote",
+          updatedAt: Date.now(),
+        });
       } else {
         const created = await api.createDiagram(diagramTitle, code);
         setCurrentDiagramId(created.id);
         markDiagramPersisted({ id: created.id, title: diagramTitle, code });
+        clearStoredLocalDraft();
+        rememberWorkspace({
+          key: `remote:${created.id}`,
+          diagramId: created.id,
+          title: diagramTitle,
+          source: "remote",
+          updatedAt: Date.now(),
+        });
       }
+      setWorkspaceSource("remote");
+      setCurrentLocalFile(null);
+      setCurrentFilePath(null);
+      setActiveWorkspaceHandle(null);
+      setWorkspaceFiles([]);
+      setWorkspaceRoot(null);
       api.listDiagrams().then(setDiagramList).catch(() => {});
     } catch (e) {
       setSaveState("error");
@@ -992,17 +1320,35 @@ const IDEPageContent = () => {
     }
   };
 
-  const handleLoadDiagram = async (id: string) => {
+  const handleLoadDiagram = useCallback(async (id: string) => {
+    if (!confirmReplaceCurrentDocument()) {
+      return;
+    }
+
     try {
       const diagram = await api.getDiagram(id);
-      setCurrentDiagramId(diagram.id);
-      setDiagramTitle(diagram.title);
-      setCode(diagram.content);
-      markDiagramPersisted({ id: diagram.id, title: diagram.title, code: diagram.content });
+      loadWorkspaceDocument({
+        title: diagram.title,
+        content: diagram.content,
+        diagramId: diagram.id,
+        source: "remote",
+        artifactKind: "diagram",
+        persisted: { id: diagram.id, title: diagram.title, code: diagram.content },
+      });
+      rememberWorkspace({
+        key: `remote:${diagram.id}`,
+        diagramId: diagram.id,
+        title: diagram.title,
+        source: "remote",
+        updatedAt: Date.now(),
+      });
+      setActiveWorkspaceHandle(null);
+      setWorkspaceFiles([]);
+      setWorkspaceRoot(null);
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Load failed');
     }
-  };
+  }, [confirmReplaceCurrentDocument, loadWorkspaceDocument, rememberWorkspace]);
 
   const handleShare = async () => {
     if (!authToken || !currentDiagramId) {
@@ -1021,6 +1367,468 @@ const IDEPageContent = () => {
     if (!currentDiagramId) { alert('Save the diagram first to export.'); return; }
     window.open(api.exportUrl(currentDiagramId, format), '_blank');
   };
+
+  const handleOpenWorkspaceFile = useCallback(async (
+    file: WorkspaceFileEntry,
+    workspaceContext?: WorkspaceFolderHandle | null,
+    skipReplaceConfirm = false
+  ) => {
+    const resolvedWorkspace = workspaceContext ?? activeWorkspaceHandle;
+
+    if (!skipReplaceConfirm && !confirmReplaceCurrentDocument()) {
+      return;
+    }
+
+    try {
+      const content = await browserWorkspaceFileSystem.readFile(file);
+      loadWorkspaceDocument({
+        title: stripFileExtension(file.name),
+        content,
+        source: "local",
+        artifactKind: file.kind,
+        filePath: file.path,
+        workspaceRoot: resolvedWorkspace?.name ?? workspaceRoot,
+        localFile: file,
+        persisted: { id: null, title: stripFileExtension(file.name), code: content },
+      });
+      rememberWorkspace({
+        key: `local:${resolvedWorkspace?.name ?? "workspace"}:${file.path}`,
+        diagramId: null,
+        title: file.name,
+        source: "local",
+        updatedAt: Date.now(),
+        workspaceRoot: resolvedWorkspace?.name ?? workspaceRoot,
+        currentFilePath: file.path,
+      });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Open file failed");
+    }
+  }, [activeWorkspaceHandle, confirmReplaceCurrentDocument, loadWorkspaceDocument, rememberWorkspace, workspaceRoot]);
+
+  const handleRefreshWorkspace = useCallback(async () => {
+    if (!activeWorkspaceHandle) {
+      return;
+    }
+
+    try {
+      const refreshedFiles = await browserWorkspaceFileSystem.refreshWorkspace(activeWorkspaceHandle);
+      setWorkspaceFiles(refreshedFiles);
+      setActiveWorkspaceHandle({ ...activeWorkspaceHandle, files: refreshedFiles });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Refresh workspace failed");
+    }
+  }, [activeWorkspaceHandle]);
+
+  const handleOpenFolder = useCallback(async () => {
+    if (workspaceCapability === "unavailable") {
+      alert("Local folder access works best in Chrome or Edge in this preview.");
+      return;
+    }
+
+    if (!confirmReplaceCurrentDocument()) {
+      return;
+    }
+
+    try {
+      const workspace = await browserWorkspaceFileSystem.openFolder();
+
+      if (!workspace) {
+        return;
+      }
+
+      setActiveWorkspaceHandle(workspace);
+      setWorkspaceRoot(workspace.name);
+      setWorkspaceFiles(workspace.files);
+      setCurrentLocalFile(null);
+      setCurrentFilePath(null);
+
+      rememberWorkspace({
+        key: `folder:${workspace.name}`,
+        diagramId: null,
+        title: workspace.name,
+        source: "local",
+        updatedAt: Date.now(),
+        workspaceRoot: workspace.name,
+      });
+
+      const preferredFile =
+        workspace.files.find((file) => file.kind === "diagram") ??
+        workspace.files.find((file) => file.kind === "requirements-note" || file.kind === "ba-brief") ??
+        workspace.files[0];
+
+      if (preferredFile) {
+        await handleOpenWorkspaceFile(preferredFile, workspace, true);
+      } else {
+        loadWorkspaceDocument({
+          title: DEFAULT_DIAGRAM_TITLE,
+          content: DEFAULT_MERMAID_CODE,
+          source: "draft",
+          artifactKind: "diagram",
+          filePath: null,
+          workspaceRoot: workspace.name,
+          localFile: null,
+          persisted: null,
+        });
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Open folder failed");
+    }
+  }, [confirmReplaceCurrentDocument, handleOpenWorkspaceFile, loadWorkspaceDocument, rememberWorkspace, workspaceCapability]);
+
+  const handleOpenLocalFile = useCallback(async () => {
+    if (workspaceCapability === "unavailable") {
+      alert("Local file access works best in Chrome or Edge in this preview.");
+      return;
+    }
+
+    if (!confirmReplaceCurrentDocument()) {
+      return;
+    }
+
+    try {
+      const selectedFile = await browserWorkspaceFileSystem.openFile();
+
+      if (!selectedFile) {
+        return;
+      }
+
+      setActiveWorkspaceHandle(null);
+      setWorkspaceFiles([]);
+      loadWorkspaceDocument({
+        title: stripFileExtension(selectedFile.file.name),
+        content: selectedFile.content,
+        source: "local",
+        artifactKind: selectedFile.file.kind,
+        filePath: selectedFile.file.path,
+        workspaceRoot: null,
+        localFile: selectedFile.file,
+        persisted: { id: null, title: stripFileExtension(selectedFile.file.name), code: selectedFile.content },
+      });
+      rememberWorkspace({
+        key: `local-file:${selectedFile.file.path}`,
+        diagramId: null,
+        title: selectedFile.file.name,
+        source: "local",
+        updatedAt: Date.now(),
+        currentFilePath: selectedFile.file.path,
+      });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Open local file failed");
+    }
+  }, [confirmReplaceCurrentDocument, loadWorkspaceDocument, rememberWorkspace, workspaceCapability]);
+
+  const handleSaveLocalFile = useCallback(async () => {
+    if (!currentLocalFile) {
+      alert("Open or create a local file before saving to it.");
+      return;
+    }
+
+    if (hasFreehandDrawings) {
+      alert("Art Mode strokes stay browser-only for now. Remove them before saving to a local file.");
+      return;
+    }
+
+    try {
+      const savedFile = await browserWorkspaceFileSystem.saveToFile(currentLocalFile, code);
+      const persistedLocalTitle = stripFileExtension(savedFile.file.name);
+      setCurrentDiagramId(null);
+      setCurrentLocalFile(savedFile.file);
+      setCurrentFilePath(savedFile.file.path);
+      setWorkspaceSource("local");
+      setActiveWorkspaceHandle(null);
+      setWorkspaceFiles([]);
+      setWorkspaceRoot(null);
+      markDiagramPersisted({ id: null, title: persistedLocalTitle, code });
+      clearStoredLocalDraft();
+      rememberWorkspace({
+        key: `local-file:${savedFile.file.path}`,
+        diagramId: null,
+        title: savedFile.file.name,
+        source: "local",
+        updatedAt: Date.now(),
+        workspaceRoot,
+        currentFilePath: savedFile.file.path,
+      });
+
+      if (activeWorkspaceHandle) {
+        const refreshedFiles = await browserWorkspaceFileSystem.refreshWorkspace(activeWorkspaceHandle);
+        setWorkspaceFiles(refreshedFiles);
+        setActiveWorkspaceHandle({ ...activeWorkspaceHandle, files: refreshedFiles });
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Save to local file failed");
+    }
+  }, [activeWorkspaceHandle, clearStoredLocalDraft, code, currentLocalFile, diagramTitle, markDiagramPersisted, rememberWorkspace, workspaceRoot]);
+
+  const handleSaveLocalFileAs = useCallback(async () => {
+    if (workspaceCapability === "unavailable") {
+      alert("Local file access works best in Chrome or Edge in this preview.");
+      return;
+    }
+
+    if (hasFreehandDrawings) {
+      alert("Art Mode strokes stay browser-only for now. Remove them before saving to a local file.");
+      return;
+    }
+
+    try {
+      const suggestedName = currentFilePath?.split("/").pop() ?? getArtifactFileName(currentArtifactKind);
+      const savedFile = await browserWorkspaceFileSystem.saveFileAs(suggestedName, code);
+
+      if (!savedFile) {
+        return;
+      }
+
+      const persistedLocalTitle = stripFileExtension(savedFile.file.name);
+      setCurrentDiagramId(null);
+      setCurrentLocalFile(savedFile.file);
+      setCurrentFilePath(savedFile.file.path);
+      setWorkspaceSource("local");
+      markDiagramPersisted({ id: null, title: persistedLocalTitle, code });
+      clearStoredLocalDraft();
+      rememberWorkspace({
+        key: `local-file:${savedFile.file.path}`,
+        diagramId: null,
+        title: savedFile.file.name,
+        source: "local",
+        updatedAt: Date.now(),
+        workspaceRoot,
+        currentFilePath: savedFile.file.path,
+      });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Save as local file failed");
+    }
+  }, [clearStoredLocalDraft, code, currentArtifactKind, currentFilePath, diagramTitle, hasFreehandDrawings, markDiagramPersisted, rememberWorkspace, workspaceCapability, workspaceRoot]);
+
+  const handleRestoreLocalDraft = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const storedDraft = localStorage.getItem(LOCAL_DRAFT_STORAGE_KEY);
+
+      if (!storedDraft) {
+        return;
+      }
+
+      const localDraft = JSON.parse(storedDraft) as LocalDraftSnapshot;
+      const restoredSource: WorkspaceSource = localDraft.source === "remote" ? "remote" : "draft";
+      if (!confirmReplaceCurrentDocument()) {
+        return;
+      }
+
+      setActiveWorkspaceHandle(null);
+      setWorkspaceFiles([]);
+      setCurrentLocalFile(null);
+      setCurrentFilePath(null);
+
+      loadWorkspaceDocument({
+        title: localDraft.diagramTitle,
+        content: localDraft.code,
+        diagramId: restoredSource === "remote" ? localDraft.diagramId : null,
+        source: restoredSource,
+        artifactKind: localDraft.artifactKind,
+        filePath: restoredSource === "remote" ? localDraft.currentFilePath : null,
+        workspaceRoot: restoredSource === "remote" ? localDraft.workspaceRoot : null,
+        localFile: null,
+        drawingNodes: localDraft.drawingNodes,
+        persisted: null,
+      });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Restore local draft failed");
+    }
+  }, [confirmReplaceCurrentDocument, loadWorkspaceDocument]);
+
+  const handleCreateArtifact = useCallback(async (artifactKind: "diagram" | "requirements-note" | "ba-brief") => {
+    const template = ARTIFACT_TEMPLATES.find((candidate) => candidate.id === artifactKind);
+
+    if (!template) {
+      return;
+    }
+
+    if (hasUnsavedChanges && !confirm("Start a new artifact and discard the current unsaved changes?")) {
+      return;
+    }
+
+    if (activeWorkspaceHandle) {
+      try {
+        const existingWorkspaceArtifact = workspaceFiles.find((file) => file.path === template.defaultFileName);
+
+        if (existingWorkspaceArtifact && !confirm(`Overwrite ${template.defaultFileName} in the current workspace?`)) {
+          return;
+        }
+
+        const createdFile = await browserWorkspaceFileSystem.createFile(
+          activeWorkspaceHandle,
+          template.defaultFileName,
+          template.content,
+          artifactKind
+        );
+        const refreshedFiles = await browserWorkspaceFileSystem.refreshWorkspace(activeWorkspaceHandle);
+        setWorkspaceFiles(refreshedFiles);
+        setActiveWorkspaceHandle({ ...activeWorkspaceHandle, files: refreshedFiles });
+        loadWorkspaceDocument({
+          title: stripFileExtension(createdFile.file.name),
+          content: template.content,
+          source: "local",
+          artifactKind,
+          filePath: createdFile.file.path,
+          workspaceRoot: activeWorkspaceHandle.name,
+          localFile: createdFile.file,
+          persisted: { id: null, title: stripFileExtension(createdFile.file.name), code: template.content },
+        });
+        clearStoredLocalDraft();
+        rememberWorkspace({
+          key: `local:${activeWorkspaceHandle.name}:${createdFile.file.path}`,
+          diagramId: null,
+          title: createdFile.file.name,
+          source: "local",
+          updatedAt: Date.now(),
+          workspaceRoot: activeWorkspaceHandle.name,
+          currentFilePath: createdFile.file.path,
+        });
+        return;
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "Create artifact failed");
+      }
+    }
+
+    loadWorkspaceDocument({
+      title: template.title,
+      content: template.content,
+      source: "draft",
+      artifactKind,
+      filePath: null,
+      workspaceRoot,
+      localFile: null,
+      persisted: null,
+    });
+  }, [activeWorkspaceHandle, clearStoredLocalDraft, hasUnsavedChanges, loadWorkspaceDocument, rememberWorkspace, workspaceFiles, workspaceRoot]);
+
+  const handleOpenRecentWorkspace = useCallback(async (entry: RecentWorkspaceEntry) => {
+    if (entry.source === "remote" && entry.diagramId) {
+      await handleLoadDiagram(entry.diagramId);
+      return;
+    }
+
+    if (entry.source === "local") {
+      alert(entry.workspaceRoot
+        ? `Re-open ${entry.workspaceRoot} from the Workspace menu to restore this local file.`
+        : "Re-open the local file from the File menu to restore this entry.");
+      return;
+    }
+
+    handleRestoreLocalDraft();
+  }, [handleLoadDiagram, handleRestoreLocalDraft]);
+
+  const handleQuickInsert = useCallback((actionId: "insert-actor" | "insert-process" | "insert-decision" | "insert-note") => {
+    if (currentArtifactKind !== "diagram") {
+      alert("Quick BA insert is only available while editing a Mermaid diagram.");
+      return;
+    }
+
+    const action = QUICK_INSERT_ACTIONS.find((candidate) => candidate.id === actionId);
+
+    if (!action) {
+      return;
+    }
+
+    const centerPosition = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+    addNodeToCanvas(action.shapeType, action.label, centerPosition);
+  }, [addNodeToCanvas, currentArtifactKind, screenToFlowPosition]);
+
+  const handleTopLeftAction = useCallback((actionId: string) => {
+    switch (actionId) {
+      case "open-folder":
+        void handleOpenFolder();
+        return;
+      case "refresh-workspace":
+        void handleRefreshWorkspace();
+        return;
+      case "restore-local-draft":
+        handleRestoreLocalDraft();
+        return;
+      case "new-diagram":
+        void handleCreateArtifact("diagram");
+        return;
+      case "new-requirements-note":
+        void handleCreateArtifact("requirements-note");
+        return;
+      case "new-ba-brief":
+        void handleCreateArtifact("ba-brief");
+        return;
+      case "open-local-file":
+        void handleOpenLocalFile();
+        return;
+      case "save-local-file":
+        void handleSaveLocalFile();
+        return;
+      case "save-local-file-as":
+        void handleSaveLocalFileAs();
+        return;
+      case "toggle-explorer":
+        setIsSidebarOpen((currentValue) => !currentValue);
+        return;
+      case "toggle-problems":
+        setIsTerminalOpen((currentValue) => !currentValue);
+        return;
+      case "toggle-shapes":
+        setIsRightPanelOpen((currentValue) => !currentValue);
+        return;
+      case "insert-actor":
+      case "insert-process":
+      case "insert-decision":
+      case "insert-note":
+        handleQuickInsert(actionId);
+        return;
+      case "reveal-current-file":
+        alert("Reveal will be enabled in the future local desktop runtime.");
+        return;
+      default:
+        return;
+    }
+  }, [
+    handleCreateArtifact,
+    handleOpenFolder,
+    handleOpenLocalFile,
+    handleQuickInsert,
+    handleRefreshWorkspace,
+    handleRestoreLocalDraft,
+    handleSaveLocalFile,
+    handleSaveLocalFileAs,
+  ]);
+
+  const workspaceSnapshot = buildWorkspaceSnapshot({
+    diagramId: currentDiagramId,
+    diagramTitle,
+    code,
+    nodes,
+    edges,
+    currentUser,
+    isDrawingMode,
+    hasUnsavedChanges,
+    zoomLevel,
+    parseError,
+    source: workspaceSource,
+    artifactKind: currentArtifactKind,
+    workspaceRoot,
+    currentFilePath,
+    workspaceCapability,
+    workspaceFiles: workspaceFiles.map((file) => ({ name: file.name, path: file.path, kind: file.kind })),
+    updatedAt: Date.now(),
+  });
+
+  const currentEditorLabel = currentFilePath?.split("/").pop() ?? getArtifactFileName(currentArtifactKind);
+  const workspaceLabel = workspaceSnapshot.source === "remote"
+    ? "Cloud workspace"
+    : workspaceSnapshot.workspaceRoot ?? "BA workbench";
+  const documentHint = getDocumentHint(workspaceSnapshot.source, workspaceSnapshot.artifactKind);
+  const canEditCanvas = currentArtifactKind === "diagram";
+  const canSyncCodeToDiagram = canEditCanvas;
+  const canCloudSave = currentArtifactKind === "diagram" && workspaceSource !== "local" && !hasFreehandDrawings;
+  const canSaveToLocalFile = !!currentLocalFile && !hasFreehandDrawings;
+  const canSaveAsLocalFile = workspaceCapability !== "unavailable" && !hasFreehandDrawings;
 
   const theme: WorkspaceTheme = isDarkMode ? { bgMain: "bg-[#1e1e1e]", text: "text-[#cccccc]", textMuted: "text-slate-400", border: "border-[#2b2b2b]", toolbar: "bg-[#181818]", hover: "hover:bg-[#333333]", searchBg: "bg-[#2b2b2b]", searchBorder: "border-[#3c3c3c]", itemHover: "hover:bg-[#2a2d2e]", itemActive: "bg-[#37373d]", editorTabTop: "border-blue-500", shapeBorder: "border-[#4b4b4b]", shapeFill: "bg-[#252526]" } : { bgMain: "bg-white", text: "text-slate-800", textMuted: "text-slate-500", border: "border-slate-300", toolbar: "bg-[#f3f3f3]", hover: "hover:bg-[#e4e4e4]", searchBg: "bg-white", searchBorder: "border-slate-300", itemHover: "hover:bg-slate-100", itemActive: "bg-[#e4e6f1] text-blue-700", editorTabTop: "border-blue-600", shapeBorder: "border-slate-300", shapeFill: "bg-white" };
   const libFill = isDarkMode ? '#333333' : '#ffffff';
@@ -1221,16 +2029,44 @@ const IDEPageContent = () => {
         theme={theme}
         isDarkMode={isDarkMode}
         diagramTitle={diagramTitle}
+        isTitleEditable={!isLocalArtifact}
         onDiagramTitleChange={setDiagramTitle}
-        documentHint={currentDiagramId ? "Saved workspace" : "Draft workspace"}
+        leftContent={(
+          <TopLeftToolbar
+            theme={theme}
+            workspaceRoot={workspaceSnapshot.workspaceRoot}
+            currentFilePath={workspaceSnapshot.currentFilePath}
+            currentSource={workspaceSnapshot.source}
+            workspaceCapability={workspaceSnapshot.workspaceCapability}
+            workspaceFiles={workspaceFiles}
+            recentWorkspaces={recentWorkspaces}
+            hasRestorableDraft={hasRestorableDraft}
+            isSidebarOpen={isSidebarOpen}
+            isTerminalOpen={isTerminalOpen}
+            isRightPanelOpen={isRightPanelOpen}
+            canSaveToLocalFile={canSaveToLocalFile}
+            canSaveAsLocalFile={canSaveAsLocalFile}
+            canRefreshWorkspace={!!activeWorkspaceHandle}
+            onAction={handleTopLeftAction}
+            onOpenWorkspaceFile={(file) => {
+              void handleOpenWorkspaceFile(file);
+            }}
+            onOpenRecentWorkspace={(entry) => {
+              void handleOpenRecentWorkspace(entry);
+            }}
+          />
+        )}
+        workspaceLabel={workspaceLabel}
+        documentHint={documentHint}
         rightContent={(
           <TopRightCommandBar
             theme={theme}
             isDarkMode={isDarkMode}
             currentUser={currentUser}
             saveState={effectiveSaveState}
-            canShare={!!currentDiagramId}
-            canExport={!!currentDiagramId}
+            canSave={canCloudSave}
+            canShare={!!currentDiagramId && currentArtifactKind === "diagram"}
+            canExport={!!currentDiagramId && currentArtifactKind === "diagram"}
             isSidebarOpen={isSidebarOpen}
             isTerminalOpen={isTerminalOpen}
             isRightPanelOpen={isRightPanelOpen}
@@ -1252,8 +2088,20 @@ const IDEPageContent = () => {
           <div style={{ width: explorerWidth }} className={`flex flex-col shrink-0 overflow-y-auto ${theme.bgMain}`}>
             <div className={`flex items-center justify-between px-4 py-2 text-xs font-semibold uppercase tracking-wider ${theme.textMuted}`}><span>Explorer</span><MoreHorizontal size={14} className={`cursor-pointer ${isDarkMode ? 'hover:text-white' : 'hover:text-black'}`} /></div>
             <div className="flex flex-col text-[13px] mt-1">
-              <div className={`flex items-center gap-1 px-2 py-1 cursor-pointer ${theme.itemHover} transition`}><ChevronDown size={14} /> <Folder size={14} className="text-blue-400" /> <span className="font-semibold">BA_WORKSPACE</span></div>
-              <div onClick={() => setIsTabOpen(true)} className={`flex items-center gap-1 pl-6 pr-2 py-1 cursor-pointer ${isTabOpen ? theme.itemActive : theme.itemHover} ${isDarkMode && isTabOpen ? 'border-l-2 border-blue-500' : ''}`}><FileCode size={14} className="text-yellow-400" /> <span className={isDarkMode ? 'text-white' : 'font-medium'}>diagram.mmd</span></div>
+              <div className={`flex items-center gap-1 px-2 py-1 cursor-pointer ${theme.itemHover} transition`}><ChevronDown size={14} /> <Folder size={14} className="text-blue-400" /> <span className="font-semibold">{workspaceRoot ?? "BA_WORKSPACE"}</span></div>
+              <div onClick={() => setIsTabOpen(true)} className={`flex items-center gap-1 pl-6 pr-2 py-1 cursor-pointer ${isTabOpen ? theme.itemActive : theme.itemHover} ${isDarkMode && isTabOpen ? 'border-l-2 border-blue-500' : ''}`}><FileCode size={14} className="text-yellow-400" /> <span className={isDarkMode ? 'text-white' : 'font-medium'}>{currentEditorLabel}</span></div>
+              {workspaceFiles.filter((file) => file.path !== currentFilePath).map((file) => (
+                <div
+                  key={file.path}
+                  onClick={() => {
+                    void handleOpenWorkspaceFile(file);
+                  }}
+                  className={`flex items-center gap-1 pl-6 pr-2 py-1 cursor-pointer ${currentFilePath === file.path ? theme.itemActive : theme.itemHover} transition text-[13px]`}
+                >
+                  <FileIcon size={14} className="text-slate-400 shrink-0" />
+                  <span className="truncate">{file.path}</span>
+                </div>
+              ))}
               {authToken && diagramList.map(d => (
                 <div
                   key={d.id}
@@ -1278,7 +2126,7 @@ const IDEPageContent = () => {
               <div className="flex flex-col flex-1 overflow-hidden">
                 <div className={`flex items-center h-9 ${theme.bgMain} border-b ${theme.border} overflow-x-auto shrink-0`}>
                   <div className={`flex items-center gap-2 px-3 py-1.5 ${theme.bgMain} border-t-2 ${theme.editorTabTop} text-[13px] cursor-pointer group`}>
-                    <FileCode size={14} className="text-yellow-400" /> <span className={isDarkMode ? 'text-white' : 'text-black'}>diagram.mmd</span>
+                    <FileCode size={14} className="text-yellow-400" /> <span className={isDarkMode ? 'text-white' : 'text-black'}>{currentEditorLabel}</span>
                     <div className="ml-1 p-[2px] rounded-sm opacity-0 group-hover:opacity-100 hover:bg-slate-500/30 transition-opacity" onClick={(e) => { e.stopPropagation(); setIsTabOpen(false); }} title="Close Tab"><X size={14} className={isDarkMode ? "text-slate-300 hover:text-white" : "text-slate-600 hover:text-black"} /></div>
                   </div>
                 </div>
@@ -1317,6 +2165,8 @@ const IDEPageContent = () => {
           <div className="flex-1 relative bg-slate-50 min-w-[200px] flex flex-col" ref={reactFlowWrapper}>
             <CanvasActionBar
               isDrawingMode={isDrawingMode}
+              canEditCanvas={canEditCanvas}
+              canSyncCodeToDiagram={canSyncCodeToDiagram}
               onSyncCodeToDiagram={handleSyncCodeToDiagram}
               onAutoLayout={handleAutoLayout}
               onToggleDrawingMode={() => setIsDrawingMode(!isDrawingMode)}

@@ -9,6 +9,7 @@ interface TopRightCommandBarProps {
   isDarkMode: boolean;
   currentUser: User | null;
   saveState: SaveState;
+  canSave: boolean;
   canShare: boolean;
   canExport: boolean;
   isSidebarOpen: boolean;
@@ -42,6 +43,7 @@ export default function TopRightCommandBar({
   isDarkMode,
   currentUser,
   saveState,
+  canSave,
   canShare,
   canExport,
   isSidebarOpen,
@@ -68,9 +70,9 @@ export default function TopRightCommandBar({
       <div className={`flex items-center gap-1 rounded-xl border ${theme.searchBorder} ${theme.searchBg} p-1 shadow-sm`}>
         <button
           onClick={onSave}
-          disabled={isSaving}
-          className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${actionButtonClass(theme, { active: true, disabled: isSaving })}`}
-          title="Save diagram"
+          disabled={!canSave || isSaving}
+          className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${actionButtonClass(theme, { active: canSave, disabled: !canSave || isSaving })}`}
+          title={canSave ? "Save diagram" : "Cloud save currently supports Mermaid diagrams only"}
         >
           <Save size={14} />
           <span className="hidden xl:inline">{isSaving ? "Saving..." : "Save"}</span>
