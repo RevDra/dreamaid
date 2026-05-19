@@ -32,15 +32,13 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 import dagre from "dagre";
 import { 
-  Play, PlusCircle, Link as LinkIcon, Save, Download,
-  PanelLeft, PanelBottom, PanelRight, Search, Folder,
-  FileCode, File, ChevronDown, ChevronRight, Menu,
-  MoreHorizontal, Sun, Moon, Database, Cloud, FileText,
-  Hexagon, Triangle, Type, Circle, User, StickyNote,
-  MessageSquare, Box, X, Wand2
+  Play, Search, Folder, FileCode, ChevronDown, ChevronRight, Menu,
+  MoreHorizontal, Sun, Moon, Type, Circle, User, StickyNote,
+  MessageSquare, Box, X, Wand2, PanelLeft, PanelBottom, PanelRight,
+  Hexagon, Triangle, Database, Cloud, FileText, RotateCw
 } from "lucide-react";
 
-// --- SHAPE DESCRIPTIONS (Dành cho Tooltip) ---
+// --- SHAPE DESCRIPTIONS ---
 const shapeDescriptions: Record<string, string> = {
   'rectangle': 'A standard process, action, or operation.',
   'rounded': 'An alternative process or service step.',
@@ -64,19 +62,60 @@ const shapeDescriptions: Record<string, string> = {
   'note': 'A sticky note for documentation.'
 };
 
+// --- BỘ MÁY VẼ HÌNH HỌC SVG CHUẨN XÁC ---
+const ShapeSvgRenderer = ({ type, fill, stroke, strokeWidth = 2, selected, isLibrary }: any) => {
+  const common = { fill, stroke, strokeWidth, vectorEffect: "non-scaling-stroke", strokeLinejoin: "round" as const };
+  const commonNone = { ...common, fill: "none" };
+
+  if (type === 'text') {
+    return (
+      <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100" style={{ overflow: 'visible' }}>
+        {selected && <rect x="0" y="0" width="100" height="100" fill="none" stroke="#3b82f6" strokeWidth="2" strokeDasharray="4" vectorEffect="non-scaling-stroke" />}
+      </svg>
+    );
+  }
+
+  let content = <rect x="0" y="0" width="100" height="100" {...common} />; 
+  if (type === 'rectangle') content = <rect x={isLibrary ? 5 : 0} y={isLibrary ? 25 : 0} width={isLibrary ? 90 : 100} height={isLibrary ? 50 : 100} {...common} />;
+  else if (type === 'square') content = <rect x={isLibrary ? 15 : 0} y={isLibrary ? 15 : 0} width={isLibrary ? 70 : 100} height={isLibrary ? 70 : 100} {...common} />;
+  else if (type === 'rounded') content = <rect x={isLibrary ? 5 : 0} y={isLibrary ? 25 : 0} width={isLibrary ? 90 : 100} height={isLibrary ? 50 : 100} rx="10" ry="10" {...common} />;
+  else if (type === 'ellipse') content = <ellipse cx="50" cy="50" rx={isLibrary ? 45 : 50} ry={isLibrary ? 25 : 50} {...common} />;
+  else if (type === 'circle') content = <circle cx="50" cy="50" r={isLibrary ? 35 : 50} {...common} />;
+  else if (type === 'diamond') content = <polygon points="50,0 100,50 50,100 0,50" {...common} />;
+  else if (type === 'parallelogram') content = <polygon points="15,0 100,0 85,100 0,100" {...common} />;
+  else if (type === 'hexagon') content = <polygon points="15,0 85,0 100,50 85,100 15,100 0,50" {...common} />;
+  else if (type === 'triangle') content = <polygon points="50,0 100,100 0,100" {...common} />;
+  else if (type === 'cylinder') content = <><path d="M 0 15 C 0 0, 100 0, 100 15 L 100 85 C 100 100, 0 100, 0 85 Z" {...common}/><path d="M 0 15 C 0 30, 100 30, 100 15" {...commonNone}/></>;
+  else if (type === 'process') content = <><rect x="0" y="0" width="100" height="100" {...common} /><line x1="15" y1="0" x2="15" y2="100" {...commonNone} /><line x1="85" y1="0" x2="85" y2="100" {...commonNone} /></>;
+  else if (type === 'internalStorage') content = <><rect x="0" y="0" width="100" height="100" {...common} /><line x1="0" y1="15" x2="100" y2="15" {...commonNone} /><line x1="15" y1="0" x2="15" y2="100" {...commonNone} /></>;
+  else if (type === 'step') content = <polygon points="0,0 85,0 100,50 85,100 0,100 15,50" {...common} />;
+  else if (type === 'cube') content = <path d="M 0 20 L 80 20 L 100 0 L 20 0 Z M 80 20 L 100 0 L 100 80 L 80 100 Z M 0 20 L 80 20 L 80 100 L 0 100 Z" {...common} />;
+  else if (type === 'note') content = <><path d="M 0 0 L 80 0 L 100 20 L 100 100 L 0 100 Z" {...common} /><path d="M 80 0 L 80 20 L 100 20" {...commonNone} /></>;
+  else if (type === 'document') content = <path d="M 0 0 L 100 0 L 100 85 C 75 100, 25 70, 0 85 Z" {...common} />;
+  else if (type === 'callout') content = <path d="M 0 0 L 100 0 L 100 70 L 40 70 L 20 100 L 20 70 L 0 70 Z" {...common} />;
+  else if (type === 'actor') content = <><circle cx="50" cy="25" r="25" {...common} /><path d="M 0 100 Q 0 50 50 50 Q 100 50 100 100 Z" {...common} /></>;
+  // FIX MÂY (Cubic Bezier cong mịn màng)
+  else if (type === 'cloud') content = <path d="M 25 80 C 5 80 5 45 25 40 C 25 15 70 10 75 35 C 95 35 95 75 85 80 C 85 90 25 90 25 80 Z" {...common} />;
+
+  return <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100" style={{ overflow: 'visible' }}>{content}</svg>;
+};
+
 // --- 1. CUSTOM SHAPE NODE ---
 const CustomShapeNode = ({ id, data, selected, style }: any) => {
-  const { shapeType, label } = data;
+  const { shapeType, label, rotation = 0 } = data;
   const [isHovered, setIsHovered] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(label);
+  const [rotAngle, setRotAngle] = useState(rotation);
   
+  const nodeRef = useRef<HTMLDivElement>(null);
   const { setNodes } = useReactFlow();
   const connectionNodeId = useStore((state) => state.connectionNodeId);
   const isConnecting = !!connectionNodeId;
   const showHandles = selected || isHovered || isConnecting;
 
   useEffect(() => { setEditValue(label); }, [label]);
+  useEffect(() => { setRotAngle(rotation); }, [rotation]);
 
   const saveEdit = () => {
     setIsEditing(false);
@@ -87,47 +126,80 @@ const CustomShapeNode = ({ id, data, selected, style }: any) => {
     });
   };
 
-  let shapeStyle: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    width: '100%', height: '100%',
-    backgroundColor: 'white', border: selected ? '2px solid #3b82f6' : '2px solid #1e293b',
-    color: '#0f172a', fontWeight: 500, fontSize: '12px', textAlign: 'center',
-    boxShadow: selected ? '0 4px 6px -1px rgba(59, 130, 246, 0.5)' : 'none',
-    transition: 'border 0.1s ease, box-shadow 0.1s ease',
+  const onRotateMouseDown = (e: React.MouseEvent) => {
+    e.stopPropagation(); e.preventDefault();
+    const rect = nodeRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const dx = moveEvent.clientX - centerX;
+      const dy = moveEvent.clientY - centerY;
+      let angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
+      angle = (angle + 360) % 360;
+      angle = Math.round(angle / 15) * 15;
+      setRotAngle(angle);
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      setNodes((nds) => {
+        const newNodes = nds.map((n) => n.id === id ? { ...n, data: { ...n.data, rotation: rotAngle } } : n);
+        setTimeout(() => window.dispatchEvent(new CustomEvent('mermaid-rebuild', { detail: { nodes: newNodes } })), 0);
+        return newNodes;
+      });
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
   };
 
-  if (shapeType === 'rounded') shapeStyle.borderRadius = '8px';
-  else if (shapeType === 'ellipse' || shapeType === 'circle') shapeStyle.borderRadius = '50%';
-  else if (shapeType === 'diamond') { shapeStyle.transform = 'rotate(45deg)'; }
-  else if (shapeType === 'parallelogram') { shapeStyle.transform = 'skewX(-15deg)'; }
-  
+  const isText = shapeType === 'text';
+  const fillColor = isText ? 'transparent' : '#ffffff';
+  const strokeColor = selected ? '#3b82f6' : '#1e293b';
+  const strokeWidth = selected ? 3 : 2;
+
   const handleStyle = { width: '8px', height: '8px', background: '#3b82f6', opacity: showHandles ? 1 : 0, transition: 'opacity 0.2s', border: '1px solid white' };
 
   return (
     <div className="relative group w-full h-full" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
-      <NodeResizer color="#3b82f6" isVisible={selected} minWidth={50} minHeight={40} handleStyle={{ width: '8px', height: '8px', borderRadius: '2px' }} lineStyle={{ borderWidth: '2px' }} />
+      {selected && (
+        <div 
+          className="absolute -top-10 left-1/2 -translate-x-1/2 w-6 h-6 bg-white border border-blue-500 rounded-full flex items-center justify-center cursor-grab active:cursor-grabbing shadow-sm z-50 text-blue-600 hover:bg-blue-50"
+          onMouseDown={onRotateMouseDown}
+        >
+          <RotateCw size={12} strokeWidth={3} />
+        </div>
+      )}
 
-      <Handle type="target" position={Position.Top} id="top-t" style={{...handleStyle, top: '-4px'}} />
-      <Handle type="source" position={Position.Top} id="top-s" style={{...handleStyle, top: '-4px'}} />
-      <Handle type="target" position={Position.Bottom} id="bot-t" style={{...handleStyle, bottom: '-4px'}} />
-      <Handle type="source" position={Position.Bottom} id="bot-s" style={{...handleStyle, bottom: '-4px'}} />
-      <Handle type="target" position={Position.Right} id="right-t" style={{...handleStyle, right: '-4px'}} />
-      <Handle type="source" position={Position.Right} id="right-s" style={{...handleStyle, right: '-4px'}} />
-      <Handle type="target" position={Position.Left} id="left-t" style={{...handleStyle, left: '-4px'}} />
-      <Handle type="source" position={Position.Left} id="left-s" style={{...handleStyle, left: '-4px'}} />
-      
-      <div style={shapeStyle} className="relative z-10" onDoubleClick={() => setIsEditing(true)}>
-        <span style={shapeType === 'diamond' ? { transform: 'rotate(-45deg)' } : shapeType === 'parallelogram' ? { transform: 'skewX(15deg)' } : {}}>
+      <div ref={nodeRef} style={{ width: '100%', height: '100%', transform: `rotate(${rotAngle}deg)`, transformOrigin: 'center center' }}>
+        <NodeResizer color="#3b82f6" isVisible={selected} minWidth={isText ? 20 : 50} minHeight={isText ? 20 : 40} handleStyle={{ width: '8px', height: '8px', borderRadius: '2px' }} lineStyle={{ borderWidth: '2px' }} />
+
+        <Handle type="target" position={Position.Top} id="top-t" style={{...handleStyle, top: '-4px'}} />
+        <Handle type="source" position={Position.Top} id="top-s" style={{...handleStyle, top: '-4px'}} />
+        <Handle type="target" position={Position.Bottom} id="bot-t" style={{...handleStyle, bottom: '-4px'}} />
+        <Handle type="source" position={Position.Bottom} id="bot-s" style={{...handleStyle, bottom: '-4px'}} />
+        <Handle type="target" position={Position.Right} id="right-t" style={{...handleStyle, right: '-4px'}} />
+        <Handle type="source" position={Position.Right} id="right-s" style={{...handleStyle, right: '-4px'}} />
+        <Handle type="target" position={Position.Left} id="left-t" style={{...handleStyle, left: '-4px'}} />
+        <Handle type="source" position={Position.Left} id="left-s" style={{...handleStyle, left: '-4px'}} />
+        
+        <div className="absolute inset-0 z-0 pointer-events-none">
+           <ShapeSvgRenderer type={shapeType} fill={fillColor} stroke={strokeColor} strokeWidth={strokeWidth} selected={selected} />
+        </div>
+
+        <div className={`absolute inset-0 z-10 flex flex-col items-center justify-center p-2 text-[#0f172a] text-xs font-medium text-center ${shapeType === 'actor' ? 'justify-end pb-0' : ''}`} onDoubleClick={() => setIsEditing(true)}>
           {isEditing ? (
             <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={e => e.key === 'Enter' && saveEdit()} className="w-[90%] text-center text-slate-800 bg-transparent outline-none border-b border-blue-400" />
           ) : label}
-        </span>
+        </div>
       </div>
     </div>
   );
 };
 
-// --- 2. SMART EDGE (Xử lý Đè Mũi Tên, Self Loop, Curved & Edit Text) ---
+// --- 2. SMART EDGE ---
 const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, data }: EdgeProps) => {
   const { setEdges } = useReactFlow();
   const sourceNode = useStore(useCallback((store) => store.nodeInternals.get(source), [source]));
@@ -151,16 +223,12 @@ const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, d
   const sWidth = sourceNode.width || 120; const sHeight = sourceNode.height || 40;
   const tWidth = targetNode.width || 120; const tHeight = targetNode.height || 40;
 
-  // --- SELF-LOOP (Tự nối chính nó bằng Vòng tròn Cubic Bezier) ---
   if (source === target) {
     const labelLength = typeof label === 'string' ? label.length : 0;
     const radiusX = 50 + labelLength * 2.5; 
     const radiusY = 60 + labelLength * 2.5;
-    const startX = sourceNode.position.x + sWidth / 2 + 10;
-    const startY = sourceNode.position.y; 
-    const endX = sourceNode.position.x + sWidth;
-    const endY = sourceNode.position.y + sHeight / 2 - 10;
-    
+    const startX = sourceNode.position.x + sWidth / 2 + 10; const startY = sourceNode.position.y;
+    const endX = sourceNode.position.x + sWidth; const endY = sourceNode.position.y + sHeight / 2 - 10;
     const c1X = startX + radiusX * 0.5; const c1Y = startY - radiusY;
     const c2X = endX + radiusX; const c2Y = endY - radiusY * 0.5;
 
@@ -170,28 +238,25 @@ const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, d
     return (
       <>
         <BaseEdge id={id} path={edgePath} style={style} markerEnd={markerEnd} markerStart={markerStart} />
-        {label !== undefined && (
+        {/* FIX EMPTY BOX: Chỉ hiển thị Box khi label khác rỗng hoặc đang Edit */}
+        {(label || isEditing) ? (
           <EdgeLabelRenderer>
             <div onDoubleClick={() => setIsEditing(true)} className="nodrag nopan" style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`, background: 'white', padding: '2px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: 11, fontWeight: 600, color: '#334155', zIndex: 20, pointerEvents: 'all' }}>
               {isEditing ? <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={e => e.key === 'Enter' && saveEdit()} className="text-center text-slate-800 bg-transparent outline-none border-b border-blue-400" style={{minWidth: '40px'}} /> : label}
             </div>
           </EdgeLabelRenderer>
-        )}
+        ) : null}
       </>
     );
   }
 
-  // --- NỐI 2 KHỐI KHÁC NHAU ---
   const sX = sourceNode.position.x + sWidth / 2; const sY = sourceNode.position.y + sHeight / 2;
   const tX = targetNode.position.x + tWidth / 2; const tY = targetNode.position.y + tHeight / 2;
   const dx = tX - sX; const dy = tY - sY;
   
   let sPos = Position.Right, tPos = Position.Left;
-  if (Math.abs(dx) > Math.abs(dy)) {
-    sPos = dx > 0 ? Position.Right : Position.Left; tPos = dx > 0 ? Position.Left : Position.Right;
-  } else {
-    sPos = dy > 0 ? Position.Bottom : Position.Top; tPos = dy > 0 ? Position.Top : Position.Bottom;
-  }
+  if (Math.abs(dx) > Math.abs(dy)) { sPos = dx > 0 ? Position.Right : Position.Left; tPos = dx > 0 ? Position.Left : Position.Right; } 
+  else { sPos = dy > 0 ? Position.Bottom : Position.Top; tPos = dy > 0 ? Position.Top : Position.Bottom; }
 
   const sourceX = sPos === Position.Right ? sX + sWidth/2 : sPos === Position.Left ? sX - sWidth/2 : sX;
   const sourceY = sPos === Position.Bottom ? sY + sHeight/2 : sPos === Position.Top ? sY - sHeight/2 : sY;
@@ -201,14 +266,11 @@ const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, d
   let edgePath, labelX, labelY;
 
   if (data?.isCurved) {
-    // 2 chiều cong Elip bằng Vector pháp tuyến
     const mx = (sourceX + targetX) / 2; const my = (sourceY + targetY) / 2;
     const length = Math.sqrt(dx * dx + dy * dy) || 1; 
     const nx = -dy / length; const ny = dx / length;
     const curveOffset = 60; 
     const cx = mx + nx * curveOffset; const cy = my + ny * curveOffset;
-    
-    // Dịch chân cắm 15px để đầu mũi tên tách rời nhau
     const shiftOffset = 15;
     const finalSourceX = sourceX + nx * shiftOffset; const finalSourceY = sourceY + ny * shiftOffset;
     const finalTargetX = targetX + nx * shiftOffset; const finalTargetY = targetY + ny * shiftOffset;
@@ -217,35 +279,24 @@ const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, d
     labelX = 0.25 * finalSourceX + 0.5 * cx + 0.25 * finalTargetX;
     labelY = 0.25 * finalSourceY + 0.5 * cy + 0.25 * finalTargetY;
   } else {
-    // Tách đường thẳng đi/đến (Dịch offset vuông góc để tránh chập mũi tên)
     let sShift = 0; let tShift = 0;
-    if (!data?.bidirectional) {
-      sShift = -8; 
-      tShift = 8;  
-    }
-    
-    let finalSourceX = sourceX, finalSourceY = sourceY;
-    let finalTargetX = targetX, finalTargetY = targetY;
-
-    if (sPos === Position.Right || sPos === Position.Left) {
-      finalSourceY += sShift; finalTargetY += tShift;
-    } else {
-      finalSourceX += sShift; finalTargetX += tShift;
-    }
-
-    [edgePath, labelX, labelY] = getSmoothStepPath({ sourceX: finalSourceX, sourceY: finalSourceY, sourcePosition: sPos, targetX: finalTargetX, targetY: finalTargetY, targetPosition: tPos, borderRadius: 16 });
+    if (!data?.bidirectional) { sShift = -8; tShift = 8; }
+    let fSX = sourceX, fSY = sourceY, fTX = targetX, fTY = targetY;
+    if (sPos === Position.Right || sPos === Position.Left) { fSY += sShift; fTY += tShift; } else { fSX += sShift; fTX += tShift; }
+    [edgePath, labelX, labelY] = getSmoothStepPath({ sourceX: fSX, sourceY: fSY, sourcePosition: sPos, targetX: fTX, targetY: fTY, targetPosition: tPos, borderRadius: 16 });
   }
 
   return (
     <>
       <BaseEdge id={id} path={edgePath} style={style} markerEnd={markerEnd} markerStart={markerStart} />
-      {label !== undefined && (
+      {/* FIX EMPTY BOX */}
+      {(label || isEditing) ? (
         <EdgeLabelRenderer>
           <div onDoubleClick={() => setIsEditing(true)} className="nodrag nopan" style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`, background: 'white', padding: '2px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: 11, fontWeight: 600, color: '#334155', zIndex: 20, pointerEvents: 'all' }}>
             {isEditing ? <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={e => e.key === 'Enter' && saveEdit()} className="text-center text-slate-800 bg-transparent outline-none border-b border-blue-400" style={{minWidth: '40px'}} /> : label}
           </div>
         </EdgeLabelRenderer>
-      )}
+      ) : null}
     </>
   );
 };
@@ -272,10 +323,7 @@ const consolidateEdges = (edges: Edge[]): Edge[] => {
     const backwardEdge = backwardEdges.length > 0 ? backwardEdges[backwardEdges.length - 1] : null;
 
     if (forwardEdge && backwardEdge) {
-      const fLabel = forwardEdge.label || "";
-      const bLabel = backwardEdge.label || "";
-
-      if (fLabel === bLabel) {
+      if ((forwardEdge.label || "") === (backwardEdge.label || "")) {
         forwardEdge.markerStart = { type: MarkerType.ArrowClosed, width: 20, height: 20 };
         forwardEdge.data = { ...forwardEdge.data, bidirectional: true, isCurved: false };
         consolidated.push(forwardEdge);
@@ -285,11 +333,9 @@ const consolidateEdges = (edges: Edge[]): Edge[] => {
         consolidated.push(forwardEdge, backwardEdge);
       }
     } else if (forwardEdge) {
-      forwardEdge.data = { ...forwardEdge.data, isCurved: false };
-      consolidated.push(forwardEdge);
+      forwardEdge.data = { ...forwardEdge.data, isCurved: false }; consolidated.push(forwardEdge);
     } else if (backwardEdge) {
-      backwardEdge.data = { ...backwardEdge.data, isCurved: false };
-      consolidated.push(backwardEdge);
+      backwardEdge.data = { ...backwardEdge.data, isCurved: false }; consolidated.push(backwardEdge);
     }
   });
 
@@ -308,7 +354,7 @@ const parseMermaid = (code: string) => {
     let cleanLine = line.trim();
     if (!cleanLine || cleanLine.startsWith('graph') || cleanLine.startsWith('flowchart') || cleanLine.startsWith('%%')) return;
     
-    let metadata = { shapeType: 'rectangle', x: undefined as number|undefined, y: undefined as number|undefined, w: 120, h: 40 };
+    let metadata = { shapeType: 'rectangle', x: undefined as number|undefined, y: undefined as number|undefined, w: 120, h: 40, rot: 0 };
     let codePart = cleanLine;
 
     if (cleanLine.includes('%%')) {
@@ -320,6 +366,7 @@ const parseMermaid = (code: string) => {
        const yMatch = metaStr.match(/y:(-?\d+)/); if (yMatch) metadata.y = parseInt(yMatch[1]);
        const wMatch = metaStr.match(/w:(-?\d+)/); if (wMatch) metadata.w = parseInt(wMatch[1]);
        const hMatch = metaStr.match(/h:(-?\d+)/); if (hMatch) metadata.h = parseInt(hMatch[1]);
+       const rMatch = metaStr.match(/rot:(-?\d+)/); if (rMatch) metadata.rot = parseInt(rMatch[1]);
     }
     
     if (!codePart) return; 
@@ -330,7 +377,7 @@ const parseMermaid = (code: string) => {
       const sourceLabel = sQ || sNQ || sourceId; const targetLabel = tQ || tNQ || targetId;
       const isBidirectional = arrow.includes('<');
 
-      if (!nodesMap.has(sourceId)) nodesMap.set(sourceId, { id: sourceId, position: { x: metadata.x || 0, y: metadata.y || 0 }, data: { label: sourceLabel, shapeType: metadata.shapeType }, style: { width: metadata.w, height: metadata.h }, type: 'customShape' });
+      if (!nodesMap.has(sourceId)) nodesMap.set(sourceId, { id: sourceId, position: { x: metadata.x || 0, y: metadata.y || 0 }, data: { label: sourceLabel, shapeType: metadata.shapeType, rotation: metadata.rot }, style: { width: metadata.w, height: metadata.h }, type: 'customShape' });
       if (!nodesMap.has(targetId)) nodesMap.set(targetId, { id: targetId, position: { x: (metadata.x || 0) + 200, y: (metadata.y || 0) + 100 }, data: { label: targetLabel, shapeType: 'rectangle' }, style: { width: 120, height: 40 }, type: 'customShape' });
       
       edges.push({ id: `e${sourceId}-${targetId}-${index}`, source: sourceId, target: targetId, label: edgeLabel || undefined, type: 'smart', markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20 }, markerStart: isBidirectional ? { type: MarkerType.ArrowClosed, width: 20, height: 20 } : undefined, data: { bidirectional: isBidirectional } });
@@ -342,10 +389,10 @@ const parseMermaid = (code: string) => {
       const [_, nodeId, lQ, lNQ] = nodeMatch;
       const label = lQ || lNQ || nodeId;
       if (!nodesMap.has(nodeId)) {
-        nodesMap.set(nodeId, { id: nodeId, position: { x: metadata.x !== undefined ? metadata.x : Math.random() * 200, y: metadata.y !== undefined ? metadata.y : Math.random() * 200 }, data: { label, shapeType: metadata.shapeType }, style: { width: metadata.w, height: metadata.h }, type: 'customShape' });
+        nodesMap.set(nodeId, { id: nodeId, position: { x: metadata.x !== undefined ? metadata.x : Math.random() * 200, y: metadata.y !== undefined ? metadata.y : Math.random() * 200 }, data: { label, shapeType: metadata.shapeType, rotation: metadata.rot }, style: { width: metadata.w, height: metadata.h }, type: 'customShape' });
       } else {
         const existingNode = nodesMap.get(nodeId)!;
-        existingNode.data.label = label; existingNode.data.shapeType = metadata.shapeType;
+        existingNode.data.label = label; existingNode.data.shapeType = metadata.shapeType; existingNode.data.rotation = metadata.rot;
         if (metadata.x !== undefined && metadata.y !== undefined) existingNode.position = { x: metadata.x, y: metadata.y };
         existingNode.style = { width: metadata.w, height: metadata.h };
       }
@@ -363,10 +410,11 @@ const generateMermaidFromFlow = (nodes: Node[], edges: Edge[]): string => {
   nodes.forEach(node => { 
     const label = node.data.label || node.id;
     const shape = node.data.shapeType || 'rectangle';
+    const rot = node.data.rotation || 0;
     const x = Math.round(node.position.x); const y = Math.round(node.position.y);
     const w = Math.round(node.style?.width as number || node.width || 120);
     const h = Math.round(node.style?.height as number || node.height || 40);
-    mermaidCode += `    ${node.id}["${label}"] %% shape:${shape} x:${x} y:${y} w:${w} h:${h}\n`; 
+    mermaidCode += `    ${node.id}["${label}"] %% shape:${shape} x:${x} y:${y} w:${w} h:${h} rot:${rot}\n`; 
   });
   mermaidCode += "\n";
   edges.forEach(edge => {
@@ -390,7 +438,7 @@ const autoLayoutElements = (nodes: Node[], edges: Edge[]) => {
   });
 };
 
-const SHAPE_CATEGORIES = ["General", "Flowchart", "Misc", "Basic", "Arrows", "Entity Relation", "UML"];
+const SHAPE_CATEGORIES = ["General", "Flowchart"];
 
 // --- NỘI DUNG IDE CHÍNH ---
 const IDEPageContent = () => {
@@ -421,7 +469,7 @@ const IDEPageContent = () => {
   const [hoveredShape, setHoveredShape] = useState<{ x: number, y: number, item: any } | null>(null);
   const hoverTimeout = useRef<any>(null);
 
-  const [code, setCode] = useState<string>("graph TD;\n    KH[\"Khách hàng\"] %% shape:actor x:100 y:100 w:120 h:40\n    BA[\"Business Analyst\"] %% shape:rectangle x:300 y:250 w:120 h:40\n\n    KH -->|Gửi yêu cầu| BA;\n");
+  const [code, setCode] = useState<string>("graph TD;\n    KH[\"Khách hàng\"] %% shape:actor x:100 y:100 w:80 h:80 rot:0\n    BA[\"Business Analyst\"] %% shape:rectangle x:300 y:250 w:120 h:40 rot:0\n\n    KH -->|Gửi yêu cầu| BA;\n");
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
@@ -485,6 +533,10 @@ const IDEPageContent = () => {
 
   const handleMove = useCallback((event: any, viewport: Viewport) => { setZoomLevel(viewport.zoom); }, []);
 
+  const handleCanvasMouseUp = useCallback(() => {
+    updateCodeFromFlow(nodes, edges);
+  }, [nodes, edges, updateCodeFromFlow]);
+
   const handleCanvasPointerMove = useCallback((e: React.PointerEvent) => {
     if (coordsRef.current && reactFlowWrapper.current) {
       const flowPos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
@@ -502,7 +554,19 @@ const IDEPageContent = () => {
   const addNodeToCanvas = useCallback((type: string, label: string, position: {x: number, y: number}) => {
     const uniqueId = Date.now().toString().slice(-4);
     const newNodeId = `node_${type}_${uniqueId}`;
-    const newNode: Node = { id: newNodeId, type: 'customShape', position, data: { label: `${label}`, shapeType: type }, style: { width: 120, height: 40 } };
+    
+    // FIX TỶ LỆ KÍCH THƯỚC OVAL & CLOUD KHI VÀO CANVAS
+    let w = 120, h = 40;
+    if (['square', 'circle', 'hexagon', 'cube', 'actor'].includes(type)) { w = 80; h = 80; }
+    else if (type === 'ellipse') { w = 120; h = 60; }
+    else if (type === 'cloud') { w = 120; h = 80; }
+    else if (type === 'text') { w = 50; h = 30; }
+
+    const newNode: Node = { 
+      id: newNodeId, type: 'customShape', position, 
+      data: { label: `${label}`, shapeType: type, rotation: 0 }, 
+      style: { width: w, height: h } 
+    };
     const newNodes = nodes.concat(newNode);
     setNodes(newNodes); updateCodeFromFlow(newNodes, edges);
   }, [nodes, edges, updateCodeFromFlow]);
@@ -562,7 +626,11 @@ const IDEPageContent = () => {
     closeContextMenu();
   }, [contextMenu, nodes, edges, updateCodeFromFlow, closeContextMenu]);
 
-  const theme = isDarkMode ? { bgMain: "bg-[#1e1e1e]", text: "text-[#cccccc]", textMuted: "text-slate-400", border: "border-[#2b2b2b]", toolbar: "bg-[#181818]", hover: "hover:bg-[#333333]", searchBg: "bg-[#2b2b2b]", searchBorder: "border-[#3c3c3c]", itemHover: "hover:bg-[#2a2d2e]", itemActive: "bg-[#37373d]", editorTabTop: "border-blue-500", shapeBorder: "border-[#4b4b4b]", shapeFill: "bg-[#252526]" } : { bgMain: "bg-white", text: "text-slate-800", textMuted: "text-slate-500", border: "border-slate-300", toolbar: "bg-[#f3f3f3]", hover: "hover:bg-[#e4e4e4]", searchBg: "bg-white", searchBorder: "border-slate-300", itemHover: "hover:bg-slate-100", itemActive: "bg-[#e4e6f1] text-blue-700", editorTabTop: "border-blue-600", shapeBorder: "border-slate-300", shapeFill: "bg-white" };
+  const theme = isDarkMode ? { bgMain: "bg-[#1e1e1e]", text: "text-[#cccccc]", textMuted: "text-slate-400", border: "border-[#2b2b2b]", toolbar: "bg-[#181818]", hover: "hover:bg-[#333333]", searchBg: "bg-[#2b2b2b]", searchBorder: "border-[#3c3c3c]", itemHover: "hover:bg-[#2a2d2e]", itemActive: "bg-[#37373d]", editorTabTop: "border-blue-500" } : { bgMain: "bg-white", text: "text-slate-800", textMuted: "text-slate-500", border: "border-slate-300", toolbar: "bg-[#f3f3f3]", hover: "hover:bg-[#e4e4e4]", searchBg: "bg-white", searchBorder: "border-slate-300", itemHover: "hover:bg-slate-100", itemActive: "bg-[#e4e6f1] text-blue-700", editorTabTop: "border-blue-600" };
+  
+  const libFill = isDarkMode ? '#333333' : '#ffffff';
+  const libStroke = isDarkMode ? '#cccccc' : '#1e293b';
+
   const toggleShapeMenu = (category: string) => setOpenShapeMenus(prev => ({ ...prev, [category]: !prev[category] }));
   
   const handleMouseMove = useCallback((e: MouseEvent) => { 
@@ -582,7 +650,6 @@ const IDEPageContent = () => {
     return () => { document.removeEventListener("mousemove", handleMouseMove); document.removeEventListener("mouseup", handleMouseUpDrag); document.body.style.userSelect = "auto"; }; 
   }, [isDraggingExplorer, isDraggingEditor, isDraggingRightPanel, handleMouseMove, handleMouseUpDrag]);
 
-  // Hứng sự kiện hover để tạo Tooltip
   const handleShapeMouseEnter = (e: React.MouseEvent, item: any) => {
     const rect = e.currentTarget.getBoundingClientRect();
     hoverTimeout.current = setTimeout(() => {
@@ -596,44 +663,43 @@ const IDEPageContent = () => {
   };
 
   const renderShapeItems = (category: string) => {
-    const defaultPlaceholder = [...Array(4)].map((_, i) => (<div key={i} className={`aspect-square rounded ${theme.shapeBorder} border ${theme.shapeFill} cursor-not-allowed flex items-center justify-center`}><div className={`w-4 h-4 border-2 border-dashed ${theme.shapeBorder}`}></div></div>));
     if (category === "General") {
       return (
         <>
           {[ 
-            { type: 'rectangle', label: 'Rectangle', icon: <div className={`w-6 h-4 border-2 ${theme.shapeBorder} ${theme.shapeFill}`}></div> }, 
-            { type: 'rounded', label: 'Rounded Rectangle', icon: <div className={`w-6 h-4 border-2 rounded-md ${theme.shapeBorder} ${theme.shapeFill}`}></div> }, 
+            { type: 'rectangle', label: 'Rectangle', icon: <ShapeSvgRenderer type="rectangle" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
+            { type: 'rounded', label: 'Rounded Rectangle', icon: <ShapeSvgRenderer type="rounded" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'text', label: 'Text', icon: <Type size={18} className={theme.textMuted} /> }, 
-            { type: 'ellipse', label: 'Ellipse', icon: <div className={`w-7 h-4 border-2 rounded-[50%] ${theme.shapeBorder} ${theme.shapeFill}`}></div> }, 
-            { type: 'square', label: 'Square', icon: <div className={`w-5 h-5 border-2 ${theme.shapeBorder} ${theme.shapeFill}`}></div> }, 
-            { type: 'circle', label: 'Circle', icon: <Circle size={18} className={theme.textMuted} /> }, 
-            { type: 'process', label: 'Process', icon: <div className={`w-6 h-4 border-2 ${theme.shapeBorder} ${theme.shapeFill} flex justify-between`}><div className={`border-r-2 ${theme.shapeBorder} h-full`}></div><div className={`border-l-2 ${theme.shapeBorder} h-full`}></div></div> }, 
-            { type: 'diamond', label: 'Diamond', icon: <div className={`w-4 h-4 border-2 rotate-45 ${theme.shapeBorder} ${theme.shapeFill}`}></div> }, 
-            { type: 'parallelogram', label: 'Data', icon: <div className={`w-5 h-4 border-2 -skew-x-[15deg] ${theme.shapeBorder} ${theme.shapeFill}`}></div> }, 
-            { type: 'hexagon', label: 'Hexagon', icon: <Hexagon size={18} className={theme.textMuted} /> },
-            { type: 'triangle', label: 'Triangle', icon: <Triangle size={18} className={theme.textMuted} /> },
-            { type: 'cylinder', label: 'Database', icon: <Database size={18} className={theme.textMuted} /> }, 
-            { type: 'cloud', label: 'Cloud', icon: <Cloud size={18} className={theme.textMuted} /> },
-            { type: 'document', label: 'Document', icon: <FileText size={18} className={theme.textMuted} /> },
-            { type: 'internalStorage', label: 'Internal Storage', icon: <div className={`w-6 h-5 border-2 ${theme.shapeBorder} ${theme.shapeFill} flex flex-col`}><div className={`border-b-2 ${theme.shapeBorder} w-full h-[30%]`}></div><div className={`border-r-2 ${theme.shapeBorder} h-full w-[30%] -mt-[30%]`}></div></div> }, 
-            { type: 'cube', label: 'Cube', icon: <Box size={18} className={theme.textMuted} /> },
-            { type: 'step', label: 'Step', icon: <div className={`w-6 h-4 border-2 ${theme.shapeBorder} ${theme.shapeFill} flex`}><div className="w-4 border-r-2 border-transparent h-full"></div><div className={`w-0 h-0 border-t-[8px] border-t-transparent border-b-[8px] border-b-transparent border-l-[8px] ${isDarkMode ? 'border-l-[#4b4b4b]' : 'border-l-slate-300'}`}></div></div> },
-            { type: 'callout', label: 'Callout', icon: <MessageSquare size={18} className={theme.textMuted} /> },
-            { type: 'actor', label: 'Actor', icon: <User size={18} className={theme.textMuted} /> }, 
-            { type: 'note', label: 'Note', icon: <StickyNote size={18} className={theme.textMuted} /> }
+            { type: 'ellipse', label: 'Ellipse', icon: <ShapeSvgRenderer type="ellipse" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
+            { type: 'square', label: 'Square', icon: <ShapeSvgRenderer type="square" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
+            { type: 'circle', label: 'Circle', icon: <ShapeSvgRenderer type="circle" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
+            { type: 'process', label: 'Process', icon: <ShapeSvgRenderer type="process" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
+            { type: 'diamond', label: 'Diamond', icon: <ShapeSvgRenderer type="diamond" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
+            { type: 'parallelogram', label: 'Data', icon: <ShapeSvgRenderer type="parallelogram" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
+            { type: 'hexagon', label: 'Hexagon', icon: <ShapeSvgRenderer type="hexagon" fill={libFill} stroke={libStroke} isLibrary={true} /> },
+            { type: 'triangle', label: 'Triangle', icon: <ShapeSvgRenderer type="triangle" fill={libFill} stroke={libStroke} isLibrary={true} /> },
+            { type: 'cylinder', label: 'Database', icon: <ShapeSvgRenderer type="cylinder" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
+            { type: 'cloud', label: 'Cloud', icon: <ShapeSvgRenderer type="cloud" fill={libFill} stroke={libStroke} isLibrary={true} /> },
+            { type: 'document', label: 'Document', icon: <ShapeSvgRenderer type="document" fill={libFill} stroke={libStroke} isLibrary={true} /> },
+            { type: 'internalStorage', label: 'Internal Storage', icon: <ShapeSvgRenderer type="internalStorage" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
+            { type: 'cube', label: 'Cube', icon: <ShapeSvgRenderer type="cube" fill={libFill} stroke={libStroke} isLibrary={true} /> },
+            { type: 'step', label: 'Step', icon: <ShapeSvgRenderer type="step" fill={libFill} stroke={libStroke} isLibrary={true} /> },
+            { type: 'callout', label: 'Callout', icon: <ShapeSvgRenderer type="callout" fill={libFill} stroke={libStroke} isLibrary={true} /> },
+            { type: 'actor', label: 'Actor', icon: <ShapeSvgRenderer type="actor" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
+            { type: 'note', label: 'Note', icon: <ShapeSvgRenderer type="note" fill={libFill} stroke={libStroke} isLibrary={true} /> }
           ].map(item => (
             <div 
               key={item.label} onClick={() => onShapeClick(item.type, item.label)} draggable onDragStart={(event) => onDragStart(event, item.type, item.label)} 
               onMouseEnter={(e) => handleShapeMouseEnter(e, item)} onMouseLeave={handleShapeMouseLeave}
-              className={`aspect-square rounded ${theme.shapeBorder} border ${theme.shapeFill} hover:border-blue-500 hover:shadow-sm cursor-pointer active:scale-95 flex items-center justify-center transition-all`} title={item.label}
+              className={`aspect-square rounded border ${isDarkMode ? 'border-[#3c3c3c] bg-[#1e1e1e] hover:bg-[#2a2d2e]' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'} hover:border-blue-500 cursor-pointer flex items-center justify-center p-2`} title={item.label}
             >
-              {item.icon}
+              {item.type === 'text' ? item.icon : <div className="w-full h-full pointer-events-none">{item.icon}</div>}
             </div>
           ))}
         </>
       );
     }
-    return defaultPlaceholder;
+    return null;
   };
 
   const handleEditorDidMount = (editor: editor.IStandaloneCodeEditor, monaco: any) => {
@@ -643,24 +709,22 @@ const IDEPageContent = () => {
   return (
     <div className={`flex flex-col h-screen w-full ${theme.bgMain} ${theme.text} font-sans overflow-hidden transition-colors duration-200`} onClick={closeContextMenu}>
       
-      {/* SHAPE TOOLTIP PORTAL (Fixed) */}
       {hoveredShape && (
         <div 
-          className="fixed z-[9999] bg-[#1e293b] text-white text-xs rounded-md shadow-2xl p-3 w-48 pointer-events-none transform -translate-x-full -translate-y-1/2 transition-opacity"
+          className={`fixed z-[9999] text-xs rounded-md shadow-2xl p-3 w-48 pointer-events-none transform -translate-x-full -translate-y-1/2 transition-opacity ${isDarkMode ? 'bg-[#252526] text-white border border-[#4b4b4b]' : 'bg-white text-slate-800 border border-slate-300'}`}
           style={{ top: hoveredShape.y, left: hoveredShape.x - 10 }}
         >
           <div className="flex flex-col items-center gap-2">
-             <div className="w-12 h-12 flex items-center justify-center bg-[#0f172a] rounded border border-slate-600">
-                {hoveredShape.item.icon}
+             <div className={`w-12 h-12 flex items-center justify-center p-1 rounded border ${isDarkMode ? 'bg-[#1e1e1e] border-[#4b4b4b]' : 'bg-slate-50 border-slate-200'}`}>
+                {hoveredShape.item.type === 'text' ? hoveredShape.item.icon : <div className="w-full h-full">{hoveredShape.item.icon}</div>}
              </div>
-             <div className="font-bold text-[13px]">{hoveredShape.item.label}</div>
-             <div className="text-center text-slate-300 leading-snug">{shapeDescriptions[hoveredShape.item.type] || 'A flowchart shape.'}</div>
+             <div className="font-bold text-[13px] text-center">{hoveredShape.item.label}</div>
+             <div className={`text-center leading-snug ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{shapeDescriptions[hoveredShape.item.type] || 'A flowchart shape.'}</div>
           </div>
-          <div className="absolute right-[-4px] top-1/2 -translate-y-1/2 w-2 h-2 bg-[#1e293b] transform rotate-45"></div>
+          <div className={`absolute right-[-5px] top-1/2 -translate-y-1/2 w-2 h-2 transform rotate-45 border-t border-r ${isDarkMode ? 'bg-[#252526] border-[#4b4b4b]' : 'bg-white border-slate-300'}`}></div>
         </div>
       )}
 
-      {/* CONTEXT MENU */}
       {contextMenu && (
         <div style={{ top: contextMenu.top, left: contextMenu.left }} className="fixed z-[100] bg-white border border-slate-200 shadow-xl rounded-md py-1 w-36 text-sm">
           <button onClick={handleEditItem} className="w-full text-left px-4 py-2 hover:bg-slate-100 text-slate-700 transition">Edit text</button>
@@ -753,10 +817,11 @@ const IDEPageContent = () => {
 
             <div className={`absolute top-4 left-4 z-10 px-2 py-1 text-xs font-medium rounded-md shadow border ${theme.border} ${theme.bgMain} ${theme.text}`}>{(zoomLevel * 100).toFixed(0)}%</div>
             
-            <div className="flex-1 w-full h-full" onPointerMove={handleCanvasPointerMove} onMouseUp={() => updateCodeFromFlow(nodes, edges)}>
+            <div className="flex-1 w-full h-full" onPointerMove={handleCanvasPointerMove} onMouseUp={handleCanvasMouseUp}>
               <ReactFlow 
                 nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
                 onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} 
+                onNodeDragStop={onNodeDragStop} 
                 onConnect={onConnect} onMove={handleMove} 
                 onDrop={onDrop} onDragOver={onDragOver} onNodeContextMenu={onNodeContextMenu} 
                 onEdgeContextMenu={onEdgeContextMenu} onPaneClick={closeContextMenu}
@@ -765,7 +830,6 @@ const IDEPageContent = () => {
               >
                 <Background color="#cbd5e1" gap={16} />
                 <Controls className="bg-white border-slate-200 fill-slate-600 mb-4 mr-4 shadow-sm rounded-md" />
-                <MiniMap nodeColor="#cbd5e1" maskColor="rgba(248, 250, 252, 0.7)" className="shadow-sm rounded-md border border-slate-200" nodeBorderRadius={8} />
               </ReactFlow>
             </div>
           </div>
