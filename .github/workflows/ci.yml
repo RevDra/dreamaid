@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: ["feat/backend"]
+    branches: ["main", "feat/backend"]
   pull_request:
-    branches: ["feat/backend"]
+    branches: ["main", "feat/backend"]
+  workflow_dispatch:
 
 jobs:
   frontend:

@@ -1,21 +1,27 @@
-import { Eraser, PenTool, Play, Wand2 } from "lucide-react";
+import { Eraser, Palette, PenTool, Play, Wand2 } from "lucide-react";
 
 interface CanvasActionBarProps {
   isDrawingMode: boolean;
   canEditCanvas?: boolean;
   canSyncCodeToDiagram?: boolean;
+  isDrawingSettingsOpen?: boolean;
+  isDrawingSettingsVisible?: boolean;
   onSyncCodeToDiagram: () => void;
   onAutoLayout: () => void;
   onToggleDrawingMode: () => void;
+  onToggleDrawingSettings?: () => void;
 }
 
 export default function CanvasActionBar({
   isDrawingMode,
   canEditCanvas = true,
   canSyncCodeToDiagram = true,
+  isDrawingSettingsOpen = false,
+  isDrawingSettingsVisible = false,
   onSyncCodeToDiagram,
   onAutoLayout,
   onToggleDrawingMode,
+  onToggleDrawingSettings,
 }: CanvasActionBarProps) {
   return (
     <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 px-3 py-1.5 bg-white rounded-full shadow-lg border border-slate-200 text-slate-700">
@@ -59,6 +65,27 @@ export default function CanvasActionBar({
       >
         {isDrawingMode ? <Eraser size={14} /> : <PenTool size={14} />} <span className="hidden xl:inline">{isDrawingMode ? "Exit Art Mode" : "Art Mode"}</span>
       </button>
+
+      {isDrawingSettingsVisible ? (
+        <>
+          <div className="w-px h-5 bg-slate-300 mx-1"></div>
+
+          <button
+            onClick={onToggleDrawingSettings}
+            disabled={!canEditCanvas}
+            className={`rounded-full p-1 transition ${
+              !canEditCanvas
+                ? "cursor-not-allowed text-slate-400"
+                : isDrawingSettingsOpen
+                  ? "bg-slate-200 text-slate-800"
+                  : "text-slate-500 hover:bg-slate-100"
+            }`}
+            title={canEditCanvas ? "Drawing Settings" : "Canvas actions are only available for Mermaid diagrams"}
+          >
+            <Palette size={16} />
+          </button>
+        </>
+      ) : null}
     </div>
   );
 }

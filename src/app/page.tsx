@@ -36,7 +36,7 @@ import {
   MoreHorizontal, Type, Circle, User, StickyNote,
   MessageSquare, Box, X,
   Hexagon, Triangle, Database, Cloud, FileText, RotateCw, Upload,
-  Minus, Square, PlusCircle, File as FileIcon
+  Minus, Square, PenTool, Eraser, File as FileIcon
 } from "lucide-react";
 import * as api from "../lib/api";
 import CanvasActionBar from "../components/workbench/CanvasActionBar";
@@ -56,8 +56,9 @@ import { detectWorkspaceCapability } from "../lib/workspace/fs-capabilities";
 import { ARTIFACT_TEMPLATES, QUICK_INSERT_ACTIONS } from "../lib/workspace/top-left-toolbar-config";
 import { buildWorkspaceSnapshot } from "../lib/workspace/workspace-context";
 
-// --- QUẢN LÝ ẢNH UPLOAD ---
+// --- QUẢN LÝ ẢNH UPLOAD & CLIPBOARD TẠM ---
 const globalImageRegistry: Record<string, string> = {};
+let fallbackClipboard: { nodes: Node[], edges: Edge[] } | null = null;
 
 // --- SHAPE DESCRIPTIONS ---
 const shapeDescriptions: Record<string, string> = {
@@ -100,7 +101,7 @@ const shapeDescriptions: Record<string, string> = {
   'annotationRight': 'Right bracket annotation.'
 };
 
-// --- BỘ MÁY VẼ HÌNH HỌC SVG CHUẨN XÁC ---
+// --- BỘ MÁY VẼ HÌNH HỌC SVG ---
 const ShapeSvgRenderer = ({ type, fill, stroke, strokeWidth = 2, selected, isLibrary }: any) => {
   const common = { fill, stroke, strokeWidth, vectorEffect: "non-scaling-stroke", strokeLinejoin: "round" as const };
   const commonNone = { ...common, fill: "none" };
@@ -153,8 +154,8 @@ const ShapeSvgRenderer = ({ type, fill, stroke, strokeWidth = 2, selected, isLib
   );
 };
 
-// --- 1.1 DRAWING NODE (Dành cho Art Mode) ---
-const DrawNode = ({ data, selected }: any) => {
+// --- 1.1 DRAWING NODE ---
+const DrawNode = ({ id, data, selected }: any) => {
   const { points, color, width, penStyle, isTemp, origW, origH, rotation = 0 } = data;
   const nodeRef = useRef<HTMLDivElement>(null);
   const { setNodes } = useReactFlow();
@@ -168,6 +169,7 @@ const DrawNode = ({ data, selected }: any) => {
     if (!rect) return;
     const centerX = rect.left + rect.width / 2;
     const centerY = rect.top + rect.height / 2;
+    let latestAngle = rotAngle;
 
     const onMouseMove = (moveEvent: MouseEvent) => {
       const dx = moveEvent.clientX - centerX;
@@ -175,20 +177,24 @@ const DrawNode = ({ data, selected }: any) => {
       let angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
       angle = (angle + 360) % 360;
       angle = Math.round(angle / 15) * 15;
+      latestAngle = angle;
       setRotAngle(angle);
     };
 
     const onMouseUp = () => {
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
-      // Cập nhật state nội bộ canvas, KHÔNG gửi cho Mermaid
+      setNodes((nds) => {
+        const newNodes = nds.map((n) => n.id === id ? { ...n, data: { ...n.data, rotation: latestAngle } } : n);
+        setTimeout(() => window.dispatchEvent(new CustomEvent('mermaid-rebuild', { detail: { nodes: newNodes } })), 0);
+        return newNodes;
+      });
     };
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
   };
 
   const d = points && points.length > 0 ? `M ${points[0].x} ${points[0].y} ` + points.map((p:any) => `L ${p.x} ${p.y}`).join(' ') : '';
-  
   const strokeDash = penStyle === 'dashed' ? '8 8' : penStyle === 'dotted' ? '2 4' : 'none';
   const linecap = 'round';
   const opacity = penStyle === 'highlighter' ? 0.4 : 1;
@@ -206,16 +212,17 @@ const DrawNode = ({ data, selected }: any) => {
 
   return (
     <div className="relative group w-full h-full">
-      {selected && (
+      {selected && !(window as any).__ERASER_ACTIVE__ && (
         <div className="nodrag absolute -top-8 left-1/2 -translate-x-1/2 w-6 h-6 bg-white border border-blue-500 rounded-full flex items-center justify-center cursor-grab active:cursor-grabbing shadow-sm z-50 text-blue-600 hover:bg-blue-50" onMouseDown={onRotateMouseDown}>
           <RotateCw size={12} strokeWidth={3} />
         </div>
       )}
       <div ref={nodeRef} style={{ width: '100%', height: '100%', transform: `rotate(${rotAngle}deg)`, transformOrigin: 'center center' }}>
-        <NodeResizer color="#3b82f6" isVisible={selected} minWidth={10} minHeight={10} handleStyle={{ width: '8px', height: '8px', borderRadius: '2px' }} lineStyle={{ borderWidth: '2px' }} />
+        <NodeResizer color="#3b82f6" isVisible={selected && !(window as any).__ERASER_ACTIVE__} minWidth={10} minHeight={10} handleStyle={{ width: '8px', height: '8px', borderRadius: '2px' }} lineStyle={{ borderWidth: '2px' }} />
         <svg width="100%" height="100%" viewBox={`0 0 ${origW} ${origH}`} preserveAspectRatio="none" style={{ overflow: 'visible' }}>
-          {selected && <rect x="0" y="0" width={origW} height={origH} fill="none" stroke="#3b82f6" strokeWidth="1" strokeDasharray="4" vectorEffect="non-scaling-stroke" />}
-          <path d={d} fill="none" stroke={color} strokeWidth={actualWidth} strokeDasharray={strokeDash} strokeLinecap={linecap} strokeLinejoin="round" opacity={opacity} vectorEffect="non-scaling-stroke" />
+          {selected && !(window as any).__ERASER_ACTIVE__ && <rect x="0" y="0" width={origW} height={origH} fill="none" stroke="#3b82f6" strokeWidth="1" strokeDasharray="4" vectorEffect="non-scaling-stroke" />}
+          <path d={d} stroke="transparent" strokeWidth={actualWidth + 20} fill="none" data-draw-id={id} style={{ pointerEvents: 'stroke' }} />
+          <path d={d} fill="none" stroke={color} strokeWidth={actualWidth} strokeDasharray={strokeDash} strokeLinecap={linecap} strokeLinejoin="round" opacity={opacity} vectorEffect="non-scaling-stroke" pointerEvents="none" />
         </svg>
       </div>
     </div>
@@ -255,6 +262,7 @@ const CustomShapeNode = ({ id, data, selected, style }: any) => {
     if (!rect) return;
     const centerX = rect.left + rect.width / 2;
     const centerY = rect.top + rect.height / 2;
+    let latestAngle = rotAngle;
 
     const onMouseMove = (moveEvent: MouseEvent) => {
       const dx = moveEvent.clientX - centerX;
@@ -262,6 +270,7 @@ const CustomShapeNode = ({ id, data, selected, style }: any) => {
       let angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
       angle = (angle + 360) % 360;
       angle = Math.round(angle / 15) * 15;
+      latestAngle = angle;
       setRotAngle(angle);
     };
 
@@ -269,7 +278,7 @@ const CustomShapeNode = ({ id, data, selected, style }: any) => {
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
       setNodes((nds) => {
-        const newNodes = nds.map((n) => n.id === id ? { ...n, data: { ...n.data, rotation: rotAngle } } : n);
+        const newNodes = nds.map((n) => n.id === id ? { ...n, data: { ...n.data, rotation: latestAngle } } : n);
         setTimeout(() => window.dispatchEvent(new CustomEvent('mermaid-rebuild', { detail: { nodes: newNodes } })), 0);
         return newNodes;
       });
@@ -289,7 +298,7 @@ const CustomShapeNode = ({ id, data, selected, style }: any) => {
 
   return (
     <div className="relative group w-full h-full" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
-      {selected && (
+      {selected && !(window as any).__ERASER_ACTIVE__ && (
         <div 
           className="nodrag absolute -top-8 left-1/2 -translate-x-1/2 w-6 h-6 bg-white border border-blue-500 rounded-full flex items-center justify-center cursor-grab active:cursor-grabbing shadow-sm z-50 text-blue-600 hover:bg-blue-50"
           onMouseDown={onRotateMouseDown}
@@ -299,7 +308,7 @@ const CustomShapeNode = ({ id, data, selected, style }: any) => {
       )}
 
       <div ref={nodeRef} style={{ width: '100%', height: '100%', transform: `rotate(${rotAngle}deg)`, transformOrigin: 'center center' }}>
-        <NodeResizer color="#3b82f6" isVisible={selected} minWidth={isTransparent ? 20 : 50} minHeight={isTransparent ? 20 : 40} handleStyle={{ width: '8px', height: '8px', borderRadius: '2px' }} lineStyle={{ borderWidth: '2px' }} />
+        <NodeResizer color="#3b82f6" isVisible={selected && !(window as any).__ERASER_ACTIVE__} minWidth={isTransparent ? 20 : 50} minHeight={isTransparent ? 20 : 40} handleStyle={{ width: '8px', height: '8px', borderRadius: '2px' }} lineStyle={{ borderWidth: '2px' }} />
 
         <Handle type="target" position={Position.Top} id="top-t" style={{...handleStyle, top: '-4px'}} />
         <Handle type="source" position={Position.Top} id="top-s" style={{...handleStyle, top: '-4px'}} />
@@ -312,7 +321,7 @@ const CustomShapeNode = ({ id, data, selected, style }: any) => {
         
         <div className="absolute inset-0 z-0 pointer-events-none">
            {shapeType === 'image' && displayUrl && <img src={displayUrl} className="w-full h-full object-contain pointer-events-none p-1" />}
-           <ShapeSvgRenderer type={shapeType} fill={fillColor} stroke={strokeColor} strokeWidth={strokeWidth} selected={selected} />
+           {shapeType !== 'image' && <ShapeSvgRenderer type={shapeType} fill={fillColor} stroke={strokeColor} strokeWidth={strokeWidth} selected={selected} />}
         </div>
 
         <div className={`absolute inset-0 z-10 flex flex-col items-center justify-center p-2 text-[#0f172a] text-xs font-medium text-center ${shapeType === 'actor' ? 'justify-end pb-0' : ''} ${shapeType === 'image' ? 'justify-end -bottom-6 h-auto drop-shadow-md' : ''}`} onDoubleClick={() => setIsEditing(true)}>
@@ -428,7 +437,7 @@ const SmartEdge = ({ id, source, target, style, markerEnd, markerStart, label, d
 const nodeTypes = { customShape: CustomShapeNode, drawNode: DrawNode };
 const edgeTypes = { smart: SmartEdge };
 
-// --- 3. LOGIC GỘP MŨI TÊN ---
+// --- 3. CONSOLIDATE EDGES ---
 const consolidateEdges = (edges: Edge[]): Edge[] => {
   const consolidated: Edge[] = [];
   const pairMap = new Map<string, Edge[]>();
@@ -533,9 +542,7 @@ const generateMermaidFromFlow = (nodes: Node[], edges: Edge[]): string => {
   if (nodes.length === 0) return "";
   let mermaidCode = "graph TD;\n";
   nodes.forEach(node => { 
-    // BỎ QUA DRAWNODE KHI XUẤT RA MERMAID CODE
     if (node.type === 'drawNode') return;
-
     const label = node.data.label || node.id;
     const shape = node.data.shapeType || 'rectangle';
     const rot = node.data.rotation || 0;
@@ -656,6 +663,72 @@ function getDrawingNodeSnapshot(nodes: Node[]): string {
   return JSON.stringify(nodes.filter((node) => node.type === "drawNode"));
 }
 
+// --- 5. LANDING PAGE ANIMATION COMPONENT ---
+const LandingPage = ({ onStart }: { onStart: (e: React.MouseEvent<HTMLButtonElement>) => void }) => {
+  const [stage, setStage] = useState(0);
+  const [descText, setDescText] = useState('');
+  const fullDesc = "The magical bridge between visual diagrams and code. Unleash your creativity, seamlessly design, edit, and instantly compile complex architectures into clean Mermaid code with our two-way sync engine.";
+  
+  useEffect(() => {
+    setTimeout(() => setStage(1), 500); 
+    setTimeout(() => setStage(2), 1200); 
+    setTimeout(() => setStage(3), 2000); 
+  }, []);
+
+  useEffect(() => {
+    if (stage === 3) {
+      let i = 0;
+      const interval = setInterval(() => {
+        setDescText(fullDesc.substring(0, i + 1));
+        i++;
+        if (i >= fullDesc.length) {
+          clearInterval(interval);
+          setTimeout(() => setStage(4), 400); 
+        }
+      }, 25);
+      return () => clearInterval(interval);
+    }
+  }, [stage]);
+
+  return (
+    <div className="relative w-full h-full flex flex-col items-center justify-center">
+      {/* Background Grid */}
+      <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'linear-gradient(#334155 1px, transparent 1px), linear-gradient(90deg, #334155 1px, transparent 1px)', backgroundSize: '40px 40px' }}></div>
+      
+      {/* Floating shapes */}
+      <div className="absolute top-[20%] left-[15%] w-16 h-16 border-2 border-blue-500/30 rounded-full animate-[ping_4s_infinite] pointer-events-none"></div>
+      <div className="absolute top-[60%] right-[20%] w-24 h-24 border-2 border-purple-500/30 rotate-45 animate-[pulse_6s_infinite] pointer-events-none"></div>
+      <div className="absolute bottom-[20%] left-[30%] text-6xl text-emerald-500/20 font-mono animate-bounce pointer-events-none">{'{ }'}</div>
+
+      {/* Main content */}
+      <div className="relative z-10 flex flex-col items-center">
+         <div className="flex items-center text-5xl md:text-7xl font-bold tracking-tight mb-2 h-24">
+           <span className={`text-blue-500 transform transition-all duration-700 ease-out ${stage >= 1 ? 'translate-x-0 rotate-12 scale-100' : '-translate-x-[50vw] -rotate-45 scale-150'}`}>/</span>
+           <span className={`ml-4 overflow-hidden whitespace-nowrap transition-all duration-700 ease-out ${stage >= 2 ? 'max-w-[500px] opacity-100' : 'max-w-0 opacity-0'}`}>
+             Dream Maid
+           </span>
+         </div>
+         <div className={`text-2xl md:text-3xl font-light text-slate-400 mb-8 transition-opacity duration-1000 ease-in ${stage >= 3 ? 'opacity-100' : 'opacity-0'}`}>
+             Dream Maid, Dream Aid.
+         </div>
+      </div>
+      
+      <div className="relative z-10 h-24 text-slate-300 text-lg max-w-2xl text-center font-mono leading-relaxed px-4">
+        {descText}<span className={`inline-block w-2 h-5 ml-1 bg-blue-500 align-middle ${stage < 4 ? 'animate-pulse' : 'hidden'}`}></span>
+      </div>
+      <div className={`relative z-10 mt-6 transition-all duration-1000 ease-in ${stage >= 4 ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
+        <button 
+          onClick={onStart}
+          className="group relative px-8 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-semibold transition-all duration-300 hover:shadow-[0_0_25px_rgba(59,130,246,0.8)] flex items-center gap-2"
+        >
+          Start now <span className="transform transition-transform group-hover:translate-x-1">→</span>
+        </button>
+      </div>
+    </div>
+  );
+};
+
+
 // --- NỘI DUNG IDE CHÍNH ---
 const IDEPageContent = () => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
@@ -664,6 +737,10 @@ const IDEPageContent = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const { screenToFlowPosition } = useReactFlow();
+
+  const [showLanding, setShowLanding] = useState(true);
+  const [holePos, setHolePos] = useState({ x: 0, y: 0 });
+  const [isAnimatingOut, setIsAnimatingOut] = useState(false);
 
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
@@ -677,16 +754,19 @@ const IDEPageContent = () => {
   const [openShapeMenus, setOpenShapeMenus] = useState<Record<string, boolean>>({ "Custom": true, "General": false, "Flowchart": true });
   const [customShapes, setCustomShapes] = useState<any[]>([]);
 
-  // States Layout Resize
+  const [selectionBox, setSelectionBox] = useState<{startX: number, startY: number, currX: number, currY: number} | null>(null);
+  const lastPaneClick = useRef<number>(0);
+
   const [explorerWidth, setExplorerWidth] = useState<number>(256);
   const [editorWidth, setEditorWidth] = useState<number>(500);
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(280);
+  
   const [isDraggingExplorer, setIsDraggingExplorer] = useState(false);
   const [isDraggingEditor, setIsDraggingEditor] = useState(false);
   const [isDraggingRightPanel, setIsDraggingRightPanel] = useState(false);
 
-  // Context Menu & Tooltip
-  const [contextMenu, setContextMenu] = useState<{ id: string; top: number; left: number; type: 'node' | 'edge' } | null>(null);
+  type MenuType = 'node' | 'edge' | 'pane' | 'multi';
+  const [contextMenu, setContextMenu] = useState<{ id?: string; top: number; left: number; type: MenuType } | null>(null);
   const [activeCustomShape, setActiveCustomShape] = useState<string | null>(null);
   const [hoveredShape, setHoveredShape] = useState<{ x: number, y: number, item: any } | null>(null);
   const hoverTimeout = useRef<any>(null);
@@ -723,13 +803,23 @@ const IDEPageContent = () => {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const transform = useStore((state) => state.transform);
 
-  // --- ART MODE (DRAWING) STATE ---
+  // ART MODE (DRAWING) STATE
   const [isDrawingMode, setIsDrawingMode] = useState<boolean>(false);
+  const [drawTool, setDrawTool] = useState<'pen' | 'eraser'>('pen');
   const [drawColor, setDrawColor] = useState<string>("#3b82f6");
   const [drawWidth, setDrawWidth] = useState<number>(3);
-  const [drawStyle, setDrawStyle] = useState<string>('solid'); // solid, dashed, highlighter
+  const [drawStyle, setDrawStyle] = useState<string>('solid'); 
   const [currentDrawPath, setCurrentDrawPath] = useState<{x: number, y: number}[] | null>(null);
+  
+  // COLOR RIBBON STATE
+  const [showDrawSettings, setShowDrawSettings] = useState(false);
+  const [hue, setHue] = useState(210); 
+
+  useEffect(() => {
+    (window as any).__ERASER_ACTIVE__ = (isDrawingMode && drawTool === 'eraser');
+  }, [isDrawingMode, drawTool]);
 
   const updateCodeFromFlow = useCallback((currentNodes: Node[], currentEdges: Edge[]) => {
     setCode(generateMermaidFromFlow(currentNodes, currentEdges));
@@ -893,7 +983,7 @@ const IDEPageContent = () => {
     (
       nextCode: string,
       nextArtifactKind: WorkspaceArtifactKind,
-      options?: { preserveDrawings?: boolean }
+      options?: { preserveDrawings?: boolean; preserveExistingOnError?: boolean }
     ) => {
       if (nextArtifactKind !== "diagram") {
         setNodes([]);
@@ -919,12 +1009,15 @@ const IDEPageContent = () => {
       } catch (error) {
         const parseFailure = error as { line?: number; message?: string; lineText?: string };
 
-        if (options?.preserveDrawings) {
-          setNodes((currentNodes) => currentNodes.filter((node) => node.type === "drawNode"));
-        } else {
-          setNodes([]);
+        if (!options?.preserveExistingOnError) {
+          if (options?.preserveDrawings) {
+            setNodes((currentNodes) => currentNodes.filter((node) => node.type === "drawNode"));
+          } else {
+            setNodes([]);
+          }
+          setEdges([]);
         }
-        setEdges([]);
+
         setParseError({
           line: parseFailure.line ?? 1,
           message: parseFailure.message ?? "Invalid Mermaid syntax.",
@@ -1011,18 +1104,13 @@ const IDEPageContent = () => {
       const base64 = event.target?.result as string;
       const imgId = `custom_${Date.now()}`;
       globalImageRegistry[imgId] = base64;
-      
       const newShapeInfo = { label: file.name.split('.')[0].substring(0, 15), url: imgId };
-
       try {
         localStorage.setItem(imgId, base64);
         const savedShapes = JSON.parse(localStorage.getItem('custom_shapes_list') || '[]');
         savedShapes.push(newShapeInfo);
         localStorage.setItem('custom_shapes_list', JSON.stringify(savedShapes));
-      } catch (err) {
-        console.warn("LocalStorage may be full, saving in memory only.");
-      }
-
+      } catch (err) {}
       setCustomShapes(prev => [...prev, newShapeInfo]);
       setOpenShapeMenus(prev => ({ ...prev, "Custom": true }));
     };
@@ -1052,10 +1140,9 @@ const IDEPageContent = () => {
     setActiveCustomShape(null);
   };
 
-
   useEffect(() => {
-    const nodeHandler = (e: any) => { updateCodeFromFlow(e.detail.nodes, edges); };
-    const edgeHandler = (e: any) => { updateCodeFromFlow(nodes, e.detail.edges); };
+    const nodeHandler = (e: any) => { updateCodeFromFlow(e.detail.nodes || nodes, edges); };
+    const edgeHandler = (e: any) => { updateCodeFromFlow(nodes, e.detail.edges || edges); };
     window.addEventListener('mermaid-rebuild', nodeHandler);
     window.addEventListener('mermaid-rebuild-edge', edgeHandler);
     return () => {
@@ -1065,10 +1152,13 @@ const IDEPageContent = () => {
   }, [nodes, edges, updateCodeFromFlow]);
 
   const handleSyncCodeToDiagram = useCallback(() => {
-    syncWorkspaceContent(code, currentArtifactKind, { preserveDrawings: true });
+    syncWorkspaceContent(code, currentArtifactKind, {
+      preserveDrawings: true,
+      preserveExistingOnError: true,
+    });
   }, [code, currentArtifactKind, syncWorkspaceContent]);
 
-  useEffect(() => { handleSyncCodeToDiagram(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { handleSyncCodeToDiagram(); }, []); 
 
   const handleAutoLayout = useCallback(() => {
     if (currentArtifactKind !== "diagram") {
@@ -1083,7 +1173,6 @@ const IDEPageContent = () => {
   const onNodesChange = useCallback((changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds)), []);
   const onEdgesChange = useCallback((changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)), []);
   const onNodeDragStop = useCallback(() => { updateCodeFromFlow(nodes, edges); }, [nodes, edges, updateCodeFromFlow]);
-  const onNodeResizeStop = useCallback(() => { updateCodeFromFlow(nodes, edges); }, [nodes, edges, updateCodeFromFlow]);
   
   const onConnect = useCallback((params: Connection) => {
     const rawEdge = { ...params, id: `e${params.source}-${params.target}-${Date.now()}`, type: 'smart', markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20 } } as Edge;
@@ -1105,48 +1194,109 @@ const IDEPageContent = () => {
       if(xSpan) xSpan.innerHTML = `X: ${Math.round(flowPos.x)}`;
       if(ySpan) ySpan.innerHTML = `Y: ${Math.round(flowPos.y)}`;
     }
-  }, [screenToFlowPosition]);
 
-  // --- ART MODE DRAWING EVENTS ---
-  const onPaneMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!isDrawingMode) return;
-    const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-    setCurrentDrawPath([pos]);
+    if (selectionBox) {
+       const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+       setSelectionBox(prev => ({ ...prev!, currX: pos.x, currY: pos.y }));
+    }
+
+    if (isDrawingMode && drawTool === 'eraser' && e.buttons === 1) {
+       const el = document.elementFromPoint(e.clientX, e.clientY);
+       if (el && el.tagName.toLowerCase() === 'path') {
+          const drawNodeId = el.getAttribute('data-draw-id');
+          if (drawNodeId) {
+             setNodes((nds) => nds.filter(n => n.id !== drawNodeId));
+          }
+       }
+    }
+  }, [screenToFlowPosition, selectionBox, isDrawingMode, drawTool, setNodes]);
+
+  const handleCanvasMouseClick = useCallback((e: React.MouseEvent) => {
+    if (isDrawingMode && drawTool === 'eraser') {
+       const el = document.elementFromPoint(e.clientX, e.clientY);
+       if (el && el.tagName.toLowerCase() === 'path') {
+          const drawNodeId = el.getAttribute('data-draw-id');
+          if (drawNodeId) {
+             setNodes((nds) => nds.filter(n => n.id !== drawNodeId));
+          }
+       }
+    }
+  }, [isDrawingMode, drawTool, setNodes]);
+
+  // DOUBLE CLICK CHỌN VÙNG (MARQUEE)
+  const onPanePointerDown = useCallback((e: React.PointerEvent) => {
+     if (isDrawingMode) return;
+     const now = Date.now();
+     if (now - lastPaneClick.current < 300) {
+        const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        setSelectionBox({ startX: pos.x, startY: pos.y, currX: pos.x, currY: pos.y });
+     }
+     lastPaneClick.current = now;
   }, [isDrawingMode, screenToFlowPosition]);
 
-  const onPaneMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!isDrawingMode || !currentDrawPath) return;
+  const onPanePointerUp = useCallback(() => {
+     if (selectionBox) {
+        const minX = Math.min(selectionBox.startX, selectionBox.currX);
+        const maxX = Math.max(selectionBox.startX, selectionBox.currX);
+        const minY = Math.min(selectionBox.startY, selectionBox.currY);
+        const maxY = Math.max(selectionBox.startY, selectionBox.currY);
+
+        setNodes(nds => nds.map(n => {
+           const nx = n.position.x;
+           const ny = n.position.y;
+           const nw = (n.style?.width as number) || 100;
+           const nh = (n.style?.height as number) || 100;
+           const isInside = !(nx > maxX || nx + nw < minX || ny > maxY || ny + nh < minY);
+           return { ...n, selected: isInside };
+        }));
+        setSelectionBox(null);
+     }
+  }, [selectionBox, setNodes]);
+
+  // VẼ TAY (ART MODE)
+  const handleDrawStart = useCallback((e: React.PointerEvent) => {
+    if (!isDrawingMode || drawTool !== 'pen') return;
+    const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    setCurrentDrawPath([pos]);
+  }, [isDrawingMode, drawTool, screenToFlowPosition]);
+
+  const handleDrawMove = useCallback((e: React.PointerEvent) => {
+    if (!isDrawingMode || drawTool !== 'pen' || !currentDrawPath) return;
     const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
     setCurrentDrawPath((prev) => prev ? [...prev, pos] : [pos]);
-  }, [isDrawingMode, currentDrawPath, screenToFlowPosition]);
+  }, [isDrawingMode, drawTool, currentDrawPath, screenToFlowPosition]);
 
-  const onPaneMouseUp = useCallback(() => {
-    if (!isDrawingMode || !currentDrawPath || currentDrawPath.length < 2) {
+  const handleDrawEnd = useCallback(() => {
+    if (!isDrawingMode || drawTool !== 'pen' || !currentDrawPath || currentDrawPath.length < 2) {
       setCurrentDrawPath(null);
       return;
     }
-
     const minX = Math.min(...currentDrawPath.map(p => p.x));
     const maxX = Math.max(...currentDrawPath.map(p => p.x));
     const minY = Math.min(...currentDrawPath.map(p => p.y));
     const maxY = Math.max(...currentDrawPath.map(p => p.y));
-    
     const w = Math.max(maxX - minX, 10);
     const h = Math.max(maxY - minY, 10);
-    
     const normalizedPath = currentDrawPath.map(p => ({ x: p.x - minX, y: p.y - minY }));
 
     const newNode: Node = {
-      id: `draw_${Date.now()}`,
-      type: 'drawNode',
-      position: { x: minX, y: minY },
-      style: { width: w, height: h },
+      id: `draw_${Date.now()}`, type: 'drawNode', position: { x: minX, y: minY }, style: { width: w, height: h },
       data: { points: normalizedPath, color: drawColor, width: drawWidth, penStyle: drawStyle, origW: w, origH: h, rotation: 0 }
     };
 
     setNodes(nds => [...nds, newNode]);
     setCurrentDrawPath(null);
-  }, [isDrawingMode, currentDrawPath, drawColor, drawWidth, drawStyle, setNodes]);
+  }, [isDrawingMode, drawTool, currentDrawPath, drawColor, drawWidth, drawStyle, setNodes]);
+
+  // CHỌN MÀU TỪ DẢI LỤA
+  const handleColorPick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    let x = e.clientX - rect.left;
+    x = Math.max(0, Math.min(x, rect.width));
+    const newHue = Math.round((x / rect.width) * 360);
+    setHue(newHue);
+    setDrawColor(`hsl(${newHue}, 100%, 50%)`);
+  };
 
 
   const onDragStart = (event: React.DragEvent, shapeType: string, defaultLabel: string, imageUrl?: string) => {
@@ -1199,12 +1349,25 @@ const IDEPageContent = () => {
       addNodeToCanvas(type, label, centerPosition, imageUrl);
   }, [screenToFlowPosition, addNodeToCanvas]);
 
-  const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
-    event.preventDefault(); setContextMenu({ id: node.id, top: event.clientY, left: event.clientX, type: 'node' });
+  // CONTEXT MENUS
+  const onPaneContextMenu = useCallback((event: React.MouseEvent) => {
+    event.preventDefault(); 
+    setContextMenu({ top: event.clientY, left: event.clientX, type: 'pane' });
   }, []);
 
+  const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
+    event.preventDefault(); 
+    const selectedNodes = nodes.filter(n => n.selected);
+    if (selectedNodes.length > 1 && selectedNodes.find(n => n.id === node.id)) {
+      setContextMenu({ top: event.clientY, left: event.clientX, type: 'multi' });
+    } else {
+      setContextMenu({ id: node.id, top: event.clientY, left: event.clientX, type: 'node' });
+    }
+  }, [nodes]);
+
   const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
-    event.preventDefault(); setContextMenu({ id: edge.id, top: event.clientY, left: event.clientX, type: 'edge' });
+    event.preventDefault();
+    setContextMenu({ id: edge.id, top: event.clientY, left: event.clientX, type: 'edge' });
   }, []);
 
   const closeContextMenu = useCallback(() => {
@@ -1212,32 +1375,138 @@ const IDEPageContent = () => {
     setActiveCustomShape(null);
   }, []);
 
-  const handleEditItem = useCallback(() => {
+  const handleEditItem = () => {
     if (!contextMenu) return;
-    const currentLabel = contextMenu.type === 'node' ? nodes.find(n => n.id === contextMenu.id)?.data.label : edges.find(e => e.id === contextMenu.id)?.label;
+    if (contextMenu.type === 'edge') {
+      const currentLabel = edges.find((edge) => edge.id === contextMenu.id)?.label;
+      const newLabel = prompt("Enter new text:", typeof currentLabel === "string" ? currentLabel : "");
+      if (newLabel !== null) {
+        const updatedEdges = edges.map((edge) => edge.id === contextMenu.id ? { ...edge, label: newLabel } : edge);
+        const consolidatedEdges = consolidateEdges(updatedEdges);
+        setEdges(consolidatedEdges);
+        updateCodeFromFlow(nodes, consolidatedEdges);
+      }
+      closeContextMenu();
+      return;
+    }
+
+    const currentLabel = nodes.find(n => n.id === contextMenu.id)?.data.label;
     const newLabel = prompt("Enter new text:", currentLabel || "");
     if (newLabel !== null) {
-      if (contextMenu.type === 'node') {
         const newNodes = nodes.map(n => n.id === contextMenu.id ? { ...n, data: { ...n.data, label: newLabel } } : n);
         setNodes(newNodes); updateCodeFromFlow(newNodes, edges);
-      } else {
-        const newEdges = edges.map(e => e.id === contextMenu.id ? { ...e, label: newLabel } : e);
-        const consolidated = consolidateEdges(newEdges); 
-        setEdges(consolidated); updateCodeFromFlow(nodes, consolidated);
-      }
     }
     closeContextMenu();
-  }, [contextMenu, nodes, edges, updateCodeFromFlow, closeContextMenu]);
+  };
+
+  const handleCopy = () => {
+    const selectedNodes = contextMenu?.type === 'multi' ? nodes.filter(n => n.selected) : nodes.filter(n => n.id === contextMenu?.id);
+    if (selectedNodes.length > 0) {
+       const selectedNodeIds = new Set(selectedNodes.map(n => n.id));
+       const selectedEdges = edges.filter(e => selectedNodeIds.has(e.source) && selectedNodeIds.has(e.target));
+       fallbackClipboard = { nodes: selectedNodes, edges: selectedEdges };
+       if (navigator.clipboard?.writeText) {
+         void navigator.clipboard.writeText(JSON.stringify({ type: 'beauty-maid-clip', payload: fallbackClipboard })).catch(() => {});
+       }
+    }
+    closeContextMenu();
+  };
+
+  const handlePaste = async () => {
+    if (!contextMenu) return;
+    if (currentArtifactKind !== "diagram") {
+      closeContextMenu();
+      return;
+    }
+    let clipData = fallbackClipboard;
+
+    if (navigator.clipboard?.readText) {
+      let clipboardText = "";
+      let clipboardReadFailed = false;
+
+      try {
+        clipboardText = await navigator.clipboard.readText();
+      } catch {
+        clipboardReadFailed = true;
+      }
+
+      if (!clipboardReadFailed) {
+        try {
+          const parsed = JSON.parse(clipboardText);
+          if (parsed?.type !== "beauty-maid-clip") {
+            closeContextMenu();
+            return;
+          }
+          clipData = parsed.payload;
+        } catch {
+          closeContextMenu();
+          return;
+        }
+      }
+    }
+
+    if (clipData && clipData.nodes.length > 0) {
+      const flowPos = screenToFlowPosition({ x: contextMenu.left, y: contextMenu.top });
+      const minX = Math.min(...clipData.nodes.map(n => n.position.x));
+      const minY = Math.min(...clipData.nodes.map(n => n.position.y));
+
+      const idMap = new Map<string, string>();
+      const clonedNodes = clipData.nodes.map(n => {
+         const newId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+         idMap.set(n.id, newId);
+         return { ...n, id: newId, selected: true, position: { x: flowPos.x + (n.position.x - minX), y: flowPos.y + (n.position.y - minY) } };
+      });
+
+      const clonedEdges = clipData.edges.map(e => ({
+         ...e, id: `e${idMap.get(e.source)}-${idMap.get(e.target)}-${Date.now()}`, source: idMap.get(e.source)!, target: idMap.get(e.target)!
+      }));
+
+      setNodes(nds => [...nds.map(n => ({...n, selected: false})), ...clonedNodes]);
+      setEdges(eds => [...eds, ...clonedEdges]);
+      updateCodeFromFlow([...nodes, ...clonedNodes], [...edges, ...clonedEdges]);
+    }
+    closeContextMenu();
+  };
+
+  const handleDuplicate = () => {
+    const selectedNodes = contextMenu?.type === 'multi' ? nodes.filter(n => n.selected) : nodes.filter(n => n.id === contextMenu?.id);
+    if (selectedNodes.length > 0) {
+       const selectedNodeIds = new Set(selectedNodes.map(n => n.id));
+       const selectedEdges = edges.filter(e => selectedNodeIds.has(e.source) && selectedNodeIds.has(e.target));
+       
+       const idMap = new Map<string, string>();
+       const clonedNodes = selectedNodes.map(n => {
+         const newId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+         idMap.set(n.id, newId);
+         return { ...n, id: newId, selected: true, position: { x: n.position.x + 40, y: n.position.y + 40 } };
+       });
+
+       const clonedEdges = selectedEdges.map(e => ({
+         ...e, id: `e${idMap.get(e.source)}-${idMap.get(e.target)}-${Date.now()}`, source: idMap.get(e.source)!, target: idMap.get(e.target)!
+       }));
+
+       setNodes(nds => [...nds.map(n => ({...n, selected: false})), ...clonedNodes]);
+       setEdges(eds => [...eds, ...clonedEdges]);
+       updateCodeFromFlow([...nodes, ...clonedNodes], [...edges, ...clonedEdges]);
+    }
+    closeContextMenu();
+  };
 
   const handleDeleteItem = useCallback(() => {
     if (!contextMenu) return;
-    if (contextMenu.type === 'node') {
-      const newNodes = nodes.filter((n) => n.id !== contextMenu.id);
-      const newEdges = edges.filter((e) => e.source !== contextMenu.id && e.target !== contextMenu.id);
+    if (contextMenu.type === 'multi') {
+      const newNodes = nodes.filter(n => !n.selected);
+      const selectedIds = new Set(nodes.filter(n => n.selected).map(n => n.id));
+      const newEdges = edges.filter(e => !selectedIds.has(e.source) && !selectedIds.has(e.target));
       setNodes(newNodes); setEdges(newEdges); updateCodeFromFlow(newNodes, newEdges);
+    } else if (contextMenu.type === 'edge') {
+      const newEdges = consolidateEdges(edges.filter((edge) => edge.id !== contextMenu.id));
+      setEdges(newEdges);
+      updateCodeFromFlow(nodes, newEdges);
     } else {
-      const newEdges = edges.filter((e) => e.id !== contextMenu.id);
-      setEdges(newEdges); updateCodeFromFlow(nodes, newEdges);
+      const newNodes = nodes.filter(n => n.id !== contextMenu.id);
+      const newEdges = edges.filter(e => e.source !== contextMenu.id && e.target !== contextMenu.id);
+      setNodes(newNodes); setEdges(newEdges); updateCodeFromFlow(newNodes, newEdges);
     }
     closeContextMenu();
   }, [contextMenu, nodes, edges, updateCodeFromFlow, closeContextMenu]);
@@ -1854,15 +2123,10 @@ const IDEPageContent = () => {
 
   const handleShapeMouseEnter = (e: React.MouseEvent, item: any) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    hoverTimeout.current = setTimeout(() => {
-      setHoveredShape({ x: rect.left, y: rect.top + rect.height / 2, item });
-    }, 500); 
+    hoverTimeout.current = setTimeout(() => setHoveredShape({ x: rect.left, y: rect.top + rect.height / 2, item }), 500); 
   };
 
-  const handleShapeMouseLeave = () => {
-    clearTimeout(hoverTimeout.current);
-    setHoveredShape(null);
-  };
+  const handleShapeMouseLeave = () => { clearTimeout(hoverTimeout.current); setHoveredShape(null); };
 
   const renderShapeItems = (category: string) => {
     if (category === "Custom") {
@@ -1924,7 +2188,6 @@ const IDEPageContent = () => {
             { type: 'ellipse', label: 'Ellipse', icon: <ShapeSvgRenderer type="ellipse" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'square', label: 'Square', icon: <ShapeSvgRenderer type="square" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'circle', label: 'Circle', icon: <ShapeSvgRenderer type="circle" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
-            { type: 'process', label: 'Process', icon: <ShapeSvgRenderer type="process" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'diamond', label: 'Diamond', icon: <ShapeSvgRenderer type="diamond" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'parallelogram', label: 'Data', icon: <ShapeSvgRenderer type="parallelogram" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'hexagon', label: 'Hexagon', icon: <ShapeSvgRenderer type="hexagon" fill={libFill} stroke={libStroke} isLibrary={true} /> },
@@ -1957,14 +2220,9 @@ const IDEPageContent = () => {
           {[ 
             { type: 'annotationLeft', label: 'Annotation 1', icon: <ShapeSvgRenderer type="annotationLeft" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'annotationRight', label: 'Annotation 2', icon: <ShapeSvgRenderer type="annotationRight" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
-            { type: 'diamond', label: 'Decision', icon: <ShapeSvgRenderer type="diamond" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
-            { type: 'parallelogram', label: 'Data', icon: <ShapeSvgRenderer type="parallelogram" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'process', label: 'Predefined Process', icon: <ShapeSvgRenderer type="process" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
-            { type: 'internalStorage', label: 'Internal Storage', icon: <ShapeSvgRenderer type="internalStorage" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
-            { type: 'document', label: 'Document', icon: <ShapeSvgRenderer type="document" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'multiDocument', label: 'Multi-Document', icon: <ShapeSvgRenderer type="multiDocument" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'terminator', label: 'Terminator', icon: <ShapeSvgRenderer type="terminator" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
-            { type: 'hexagon', label: 'Preparation', icon: <ShapeSvgRenderer type="hexagon" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'manualInput', label: 'Manual Input', icon: <ShapeSvgRenderer type="manualInput" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'manualOperation', label: 'Manual Operation', icon: <ShapeSvgRenderer type="manualOperation" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'circle', label: 'Connector', icon: <ShapeSvgRenderer type="circle" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
@@ -1976,7 +2234,6 @@ const IDEPageContent = () => {
             { type: 'sort', label: 'Sort', icon: <ShapeSvgRenderer type="sort" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'extract', label: 'Extract', icon: <ShapeSvgRenderer type="extract" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'merge', label: 'Merge', icon: <ShapeSvgRenderer type="merge" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
-            { type: 'cylinder', label: 'Database', icon: <ShapeSvgRenderer type="cylinder" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'delay', label: 'Delay', icon: <ShapeSvgRenderer type="delay" fill={libFill} stroke={libStroke} isLibrary={true} /> }, 
             { type: 'display', label: 'Display', icon: <ShapeSvgRenderer type="display" fill={libFill} stroke={libStroke} isLibrary={true} /> }
           ].map(item => (
@@ -1999,295 +2256,406 @@ const IDEPageContent = () => {
     monacoRef.current = { editor, monaco };
   };
 
-  return (
-    <div className={`flex flex-col h-screen w-full ${theme.bgMain} ${theme.text} font-sans overflow-hidden transition-colors duration-200`} onClick={closeContextMenu}>
-      
-      {hoveredShape && (
-        <div 
-          className={`fixed z-[9999] text-xs rounded-md shadow-2xl p-3 w-48 pointer-events-none transform -translate-x-full -translate-y-1/2 transition-opacity ${isDarkMode ? 'bg-[#252526] text-white border border-[#4b4b4b]' : 'bg-white text-slate-800 border border-slate-300'}`}
-          style={{ top: hoveredShape.y, left: hoveredShape.x - 10 }}
-        >
-          <div className="flex flex-col items-center gap-2">
-             <div className={`w-12 h-12 flex items-center justify-center p-1 rounded border ${isDarkMode ? 'bg-[#1e1e1e] border-[#4b4b4b]' : 'bg-slate-50 border-slate-200'}`}>
-                {hoveredShape.item.type === 'text' || hoveredShape.item.type === 'image' ? hoveredShape.item.icon : <div className="w-full h-full">{hoveredShape.item.icon}</div>}
-             </div>
-             <div className="font-bold text-[13px] text-center">{hoveredShape.item.label}</div>
-             <div className={`text-center leading-snug ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{shapeDescriptions[hoveredShape.item.type] || 'A flowchart shape.'}</div>
-          </div>
-          <div className={`absolute right-[-5px] top-1/2 -translate-y-1/2 w-2 h-2 transform rotate-45 border-t border-r ${isDarkMode ? 'bg-[#252526] border-[#4b4b4b]' : 'bg-white border-slate-300'}`}></div>
-        </div>
-      )}
+  const startApp = (e?: React.MouseEvent) => {
+    if(e) { setHolePos({ x: e.clientX, y: e.clientY }); } 
+    else { setHolePos({ x: window.innerWidth / 2, y: window.innerHeight / 2 }); }
+    setIsAnimatingOut(true);
+    setTimeout(() => setShowLanding(false), 1000);
+  };
 
-      {contextMenu && (
-        <div style={{ top: contextMenu.top, left: contextMenu.left }} className="fixed z-[100] bg-white border border-slate-200 shadow-xl rounded-md py-1 w-36 text-sm">
-          <button onClick={handleEditItem} className="w-full text-left px-4 py-2 hover:bg-slate-100 text-slate-700 transition">Edit text</button>
-          <button onClick={handleDeleteItem} className="w-full text-left px-4 py-2 hover:bg-red-50 text-red-600 border-t border-slate-100 transition font-medium">Delete</button>
-        </div>
-      )}
-
-      <WorkspaceTopBar
-        theme={theme}
-        isDarkMode={isDarkMode}
-        diagramTitle={diagramTitle}
-        isTitleEditable={!isLocalArtifact}
-        onDiagramTitleChange={setDiagramTitle}
-        leftContent={(
-          <TopLeftToolbar
-            theme={theme}
-            workspaceRoot={workspaceSnapshot.workspaceRoot}
-            currentFilePath={workspaceSnapshot.currentFilePath}
-            currentSource={workspaceSnapshot.source}
-            workspaceCapability={workspaceSnapshot.workspaceCapability}
-            workspaceFiles={workspaceFiles}
-            recentWorkspaces={recentWorkspaces}
-            hasRestorableDraft={hasRestorableDraft}
-            isSidebarOpen={isSidebarOpen}
-            isTerminalOpen={isTerminalOpen}
-            isRightPanelOpen={isRightPanelOpen}
-            canSaveToLocalFile={canSaveToLocalFile}
-            canSaveAsLocalFile={canSaveAsLocalFile}
-            canRefreshWorkspace={!!activeWorkspaceHandle}
-            onAction={handleTopLeftAction}
-            onOpenWorkspaceFile={(file) => {
-              void handleOpenWorkspaceFile(file);
+  if (showLanding) {
+    return (
+      <div className="fixed inset-0 z-[10000] bg-[#0f172a] text-white flex flex-col items-center justify-center overflow-hidden font-sans">
+        <LandingPage onStart={startApp} />
+        {isAnimatingOut && (
+          <div 
+            className="absolute inset-0 bg-transparent pointer-events-none"
+            style={{
+               animation: 'holeExpand 1s cubic-bezier(0.65, 0, 0.35, 1) forwards',
+               background: `radial-gradient(circle at ${holePos.x}px ${holePos.y}px, transparent var(--hole-radius, 0%), #0f172a var(--hole-radius, 0%))`
             }}
-            onOpenRecentWorkspace={(entry) => {
-              void handleOpenRecentWorkspace(entry);
-            }}
-          />
-        )}
-        workspaceLabel={workspaceLabel}
-        documentHint={documentHint}
-        rightContent={(
-          <TopRightCommandBar
-            theme={theme}
-            isDarkMode={isDarkMode}
-            currentUser={currentUser}
-            saveState={effectiveSaveState}
-            canSave={canCloudSave}
-            canShare={!!currentDiagramId && currentArtifactKind === "diagram"}
-            canExport={!!currentDiagramId && currentArtifactKind === "diagram"}
-            isSidebarOpen={isSidebarOpen}
-            isTerminalOpen={isTerminalOpen}
-            isRightPanelOpen={isRightPanelOpen}
-            onOpenAuth={() => setAuthModal('login')}
-            onLogout={handleLogout}
-            onToggleTheme={() => setIsDarkMode(!isDarkMode)}
-            onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-            onToggleTerminal={() => setIsTerminalOpen(!isTerminalOpen)}
-            onToggleRightPanel={() => setIsRightPanelOpen(!isRightPanelOpen)}
-            onSave={handleSave}
-            onShare={handleShare}
-            onExport={() => handleExport('svg')}
-          />
-        )}
-      />
-
-      <div className="flex flex-1 overflow-hidden">
-        {isSidebarOpen && (
-          <div style={{ width: explorerWidth }} className={`flex flex-col shrink-0 overflow-y-auto ${theme.bgMain}`}>
-            <div className={`flex items-center justify-between px-4 py-2 text-xs font-semibold uppercase tracking-wider ${theme.textMuted}`}><span>Explorer</span><MoreHorizontal size={14} className={`cursor-pointer ${isDarkMode ? 'hover:text-white' : 'hover:text-black'}`} /></div>
-            <div className="flex flex-col text-[13px] mt-1">
-              <div className={`flex items-center gap-1 px-2 py-1 cursor-pointer ${theme.itemHover} transition`}><ChevronDown size={14} /> <Folder size={14} className="text-blue-400" /> <span className="font-semibold">{workspaceRoot ?? "BA_WORKSPACE"}</span></div>
-              <div onClick={() => setIsTabOpen(true)} className={`flex items-center gap-1 pl-6 pr-2 py-1 cursor-pointer ${isTabOpen ? theme.itemActive : theme.itemHover} ${isDarkMode && isTabOpen ? 'border-l-2 border-blue-500' : ''}`}><FileCode size={14} className="text-yellow-400" /> <span className={isDarkMode ? 'text-white' : 'font-medium'}>{currentEditorLabel}</span></div>
-              {workspaceFiles.filter((file) => file.path !== currentFilePath).map((file) => (
-                <div
-                  key={file.path}
-                  onClick={() => {
-                    void handleOpenWorkspaceFile(file);
-                  }}
-                  className={`flex items-center gap-1 pl-6 pr-2 py-1 cursor-pointer ${currentFilePath === file.path ? theme.itemActive : theme.itemHover} transition text-[13px]`}
-                >
-                  <FileIcon size={14} className="text-slate-400 shrink-0" />
-                  <span className="truncate">{file.path}</span>
-                </div>
-              ))}
-              {authToken && diagramList.map(d => (
-                <div
-                  key={d.id}
-                  onClick={() => handleLoadDiagram(d.id)}
-                  className={`flex items-center gap-1 pl-6 pr-2 py-1 cursor-pointer ${currentDiagramId === d.id ? theme.itemActive : theme.itemHover} transition text-[13px]`}
-                >
-                  <FileIcon size={14} className="text-slate-400 shrink-0" />
-                  <span className="truncate">{d.title}</span>
-                </div>
-              ))}
-              {!authToken && (
-                <div className={`pl-6 pr-2 py-1 text-xs ${theme.textMuted} italic`}>Login to see saved diagrams</div>
-              )}
-            </div>
-          </div>
-        )}
-        {isSidebarOpen && <div className={`w-1 cursor-col-resize hover:bg-blue-500 active:bg-blue-600 transition-colors z-10 ${theme.border} border-l`} onMouseDown={() => setIsDraggingExplorer(true)} />}
-
-        <div className="flex flex-1 overflow-hidden">
-          <div style={{ width: editorWidth }} className="flex flex-col shrink-0 min-w-[200px] h-full overflow-hidden">
-            {isTabOpen ? (
-              <div className="flex flex-col flex-1 overflow-hidden">
-                <div className={`flex items-center h-9 ${theme.bgMain} border-b ${theme.border} overflow-x-auto shrink-0`}>
-                  <div className={`flex items-center gap-2 px-3 py-1.5 ${theme.bgMain} border-t-2 ${theme.editorTabTop} text-[13px] cursor-pointer group`}>
-                    <FileCode size={14} className="text-yellow-400" /> <span className={isDarkMode ? 'text-white' : 'text-black'}>{currentEditorLabel}</span>
-                    <div className="ml-1 p-[2px] rounded-sm opacity-0 group-hover:opacity-100 hover:bg-slate-500/30 transition-opacity" onClick={(e) => { e.stopPropagation(); setIsTabOpen(false); }} title="Close Tab"><X size={14} className={isDarkMode ? "text-slate-300 hover:text-white" : "text-slate-600 hover:text-black"} /></div>
-                  </div>
-                </div>
-                <div className={`flex-1 overflow-hidden ${theme.bgMain}`} onKeyDown={(e) => e.stopPropagation()}>
-                  <Editor height="100%" defaultLanguage="markdown" theme={isDarkMode ? "vs-dark" : "light"} value={code} onChange={(val) => setCode(val || "")} onMount={handleEditorDidMount} options={{ minimap: { enabled: false }, fontSize: 14, wordWrap: "on", padding: { top: 16 } }} />
-                </div>
-              </div>
-            ) : (
-              <div className={`flex items-center justify-center flex-col flex-1 shrink-0 overflow-hidden ${theme.bgMain}`}><FileCode size={48} className={theme.textMuted} strokeWidth={1} /><p className={`mt-4 text-sm ${theme.textMuted}`}>No file is open</p><button onClick={() => setIsTabOpen(true)} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">Open diagram.mmd</button></div>
-            )}
-
-            {isTerminalOpen && (
-              <div className={`h-48 flex flex-col shrink-0 border-t ${theme.border} ${theme.bgMain}`}>
-                 <div className={`flex text-[11px] uppercase tracking-wider ${theme.textMuted} border-b ${theme.border} px-4 py-1 gap-4 shrink-0`}>
-                    <span className={`cursor-pointer border-b ${isDarkMode ? 'border-blue-500 text-slate-200' : 'border-blue-600 text-slate-800'}`}>Problems</span>
-                    <span className="cursor-pointer hover:text-slate-200">Output</span>
-                    <span className="cursor-pointer hover:text-slate-200">Terminal</span>
-                 </div>
-                 <div className="p-3 text-[13px] font-mono overflow-y-auto flex-1">
-                   {parseError ? (
-                     <div className="text-red-500">
-                       <p className="font-semibold mb-1">[{parseError.line}] {parseError.message}</p>
-                       <p className="text-slate-400">{parseError.lineText}</p>
-                       <p>{"^".repeat(parseError.lineText.length)}</p>
-                     </div>
-                   ) : (
-                     <div className="text-green-500/80">No problems have been detected in the workspace.</div>
-                   )}
-                 </div>
-              </div>
-            )}
-          </div>
-
-          <div className={`w-1 cursor-col-resize hover:bg-blue-500 active:bg-blue-600 transition-colors z-10 ${theme.border} border-l`} onMouseDown={() => setIsDraggingEditor(true)} />
-
-          <div className="flex-1 relative bg-slate-50 min-w-[200px] flex flex-col" ref={reactFlowWrapper}>
-            <CanvasActionBar
-              isDrawingMode={isDrawingMode}
-              canEditCanvas={canEditCanvas}
-              canSyncCodeToDiagram={canSyncCodeToDiagram}
-              onSyncCodeToDiagram={handleSyncCodeToDiagram}
-              onAutoLayout={handleAutoLayout}
-              onToggleDrawingMode={() => setIsDrawingMode(!isDrawingMode)}
-            />
-
-            {/* ART MODE OPTIONS PANEL */}
-            {isDrawingMode && (
-              <div className="absolute top-16 left-1/2 -translate-x-1/2 z-10 flex items-center gap-3 px-4 py-2 bg-white rounded-full shadow border border-slate-200">
-                 <div className="flex gap-1">
-                   {['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#a855f7', '#0f172a', '#ffffff'].map(color => (
-                     <button key={color} onClick={() => setDrawColor(color)} className={`w-5 h-5 rounded-full border border-slate-200 transition-transform ${drawColor === color ? 'scale-125 ring-2 ring-blue-300' : 'hover:scale-110'}`} style={{backgroundColor: color}} />
-                   ))}
-                 </div>
-                 <div className="w-px h-4 bg-slate-300 mx-1"></div>
-                 <select value={drawWidth} onChange={(e) => setDrawWidth(Number(e.target.value))} className="text-xs bg-slate-50 border border-slate-200 rounded px-1 py-0.5 outline-none">
-                   <option value={1}>1px</option>
-                   <option value={3}>3px</option>
-                   <option value={5}>5px</option>
-                   <option value={10}>10px</option>
-                 </select>
-                 <select value={drawStyle} onChange={(e) => setDrawStyle(e.target.value)} className="text-xs bg-slate-50 border border-slate-200 rounded px-1 py-0.5 outline-none">
-                   <option value="solid">Pen</option>
-                   <option value="dashed">Dashed</option>
-                   <option value="highlighter">Highlighter</option>
-                 </select>
-              </div>
-            )}
-            
-            <div ref={coordsRef} className={`absolute top-4 right-4 z-10 flex flex-wrap justify-end gap-x-2 max-w-[120px] px-3 py-1 text-[11px] font-mono rounded-md shadow border ${theme.border} ${theme.bgMain} ${theme.text}`}>
-              <span id="coord-x">X: 0</span>
-              <span id="coord-y">Y: 0</span>
-            </div>
-
-            <div className={`absolute top-4 left-4 z-10 px-2 py-1 text-xs font-medium rounded-md shadow border ${theme.border} ${theme.bgMain} ${theme.text}`}>{(zoomLevel * 100).toFixed(0)}%</div>
-            
-            <div className="flex-1 w-full h-full" onPointerMove={handleCanvasPointerMove}>
-              <ReactFlow 
-                nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
-                onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} 
-                onNodeDragStop={onNodeDragStop} 
-                onConnect={onConnect} onMove={handleMove} 
-                onDrop={onDrop} onDragOver={onDragOver} onNodeContextMenu={onNodeContextMenu} 
-                onEdgeContextMenu={onEdgeContextMenu} onPaneClick={closeContextMenu}
-                
-                // ART MODE MOUSE EVENTS
-                onMouseDown={onPaneMouseDown}
-                onMouseMove={onPaneMouseMove}
-                onMouseUp={onPaneMouseUp}
-                
-                // KHOÁ KÉO THẢ KHI ĐANG VẼ
-                nodesDraggable={!isDrawingMode}
-                nodesConnectable={!isDrawingMode}
-                elementsSelectable={!isDrawingMode}
-                panOnDrag={!isDrawingMode}
-
-                panActivationKeyCode={null} 
-                fitView
-              >
-                <Background color="#cbd5e1" gap={16} />
-                <Controls position="bottom-left" className="bg-white border-slate-200 fill-slate-600 mb-4 ml-4 shadow-sm rounded-md" />
-                
-                {/* HIỂN THỊ NÉT VẼ TẠM THỜI TRỰC TIẾP TRONG FLOW ĐỂ CHUẨN ZOOM/PAN */}
-                {currentDrawPath && currentDrawPath.length > 0 && (
-                  <svg className="absolute inset-0 w-full h-full pointer-events-none z-[100]" style={{ overflow: 'visible' }}>
-                    <path 
-                       d={`M ${currentDrawPath[0].x} ${currentDrawPath[0].y} ` + currentDrawPath.map(p => `L ${p.x} ${p.y}`).join(' ')} 
-                       fill="none" stroke={drawColor} 
-                       strokeWidth={drawStyle === 'highlighter' ? drawWidth * 3 : drawWidth} 
-                       strokeDasharray={drawStyle === 'dashed' ? '8 8' : 'none'} 
-                       strokeLinecap="round" strokeLinejoin="round" 
-                       opacity={drawStyle === 'highlighter' ? 0.4 : 1} 
-                    />
-                  </svg>
-                )}
-
-                <div 
-                   className="absolute bottom-4 right-4 z-[101] flex flex-col items-end"
-                   onMouseEnter={() => setIsMiniMapHovered(true)} onMouseLeave={() => setIsMiniMapHovered(false)}
-                >
-                   {isMiniMapOpen ? (
-                      <div className="relative rounded-md shadow border border-slate-200 overflow-hidden bg-white">
-                         <MiniMap style={{ position: 'relative', bottom: 'auto', right: 'auto', margin: 0 }} nodeColor="#cbd5e1" maskColor="rgba(248, 250, 252, 0.7)" nodeBorderRadius={8} />
-                         {isMiniMapHovered && (
-                            <button onClick={() => setIsMiniMapOpen(false)} className="absolute top-1 right-1 p-1 bg-white/90 hover:bg-slate-100 text-slate-600 hover:text-blue-600 rounded shadow-sm z-50">
-                               <Minus size={12} strokeWidth={3} />
-                            </button>
-                         )}
-                      </div>
-                   ) : (
-                      <button onClick={() => setIsMiniMapOpen(true)} className={`p-2 rounded-md shadow border ${theme.border} ${theme.bgMain} text-slate-600 hover:text-blue-600 cursor-pointer`}>
-                         <Square size={16} strokeWidth={2} />
-                      </button>
-                   )}
-                </div>
-
-              </ReactFlow>
-            </div>
-          </div>
-        </div>
-
-        {isRightPanelOpen && (
-          <div className={`w-1 cursor-col-resize hover:bg-blue-500 active:bg-blue-600 transition-colors z-10 ${theme.border} border-l`} onMouseDown={() => setIsDraggingRightPanel(true)} />
-        )}
-
-        {isRightPanelOpen && (
-          <div style={{ width: rightPanelWidth }} className={`flex flex-col shrink-0 overflow-y-auto ${theme.bgMain} pb-10`}>
-            <div className={`flex items-center px-4 py-2 text-xs font-semibold uppercase tracking-wider ${theme.textMuted} border-b ${theme.border}`}><span>Shapes Library</span></div>
-            {SHAPE_CATEGORIES.map((category) => {
-              const isOpen = openShapeMenus[category];
-              return (
-                <div key={category} className="flex flex-col">
-                  <div onClick={() => toggleShapeMenu(category)} className={`flex items-center gap-2 px-2 py-2 cursor-pointer ${theme.itemHover} border-b ${theme.border} select-none`}>
-                    {isOpen ? <ChevronDown size={16} className={theme.textMuted} /> : <ChevronRight size={16} className={theme.textMuted} />} <span className="text-[13px] font-semibold">{category}</span>
-                  </div>
-                  {isOpen && <div className={`flex flex-wrap content-start gap-2 p-3 border-b ${theme.border}`}>{renderShapeItems(category)}</div>}
-                </div>
-              );
-            })}
+          >
+            <style>{`
+              @property --hole-radius { syntax: '<percentage>'; initial-value: 0%; inherits: false; }
+              @keyframes holeExpand {
+                 0% { --hole-radius: 0%; }
+                 100% { --hole-radius: 200%; }
+              }
+            `}</style>
           </div>
         )}
       </div>
+    );
+  }
+
+  const eraserCursorUrl = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='white' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M20 20H7L3 16C2.5 15.5 2.5 14.5 3 14L13 4L20 11L11 20'/><path d='M6 11L13 18'/></svg>";
+
+  return (
+    <>
+      <style>{`
+         .eraser-cursor .react-flow__pane, .eraser-cursor .react-flow__node {
+            cursor: url("${eraserCursorUrl}") 0 24, auto !important;
+         }
+      `}</style>
+      <div className={`flex flex-col h-screen w-full ${theme.bgMain} ${theme.text} font-sans overflow-hidden transition-colors duration-200 ${isDrawingMode && drawTool === 'eraser' ? 'eraser-cursor' : ''}`} onClick={closeContextMenu}>
+        
+        {/* SHAPE TOOLTIP PORTAL */}
+        {hoveredShape && (
+          <div className={`fixed z-[9999] text-xs rounded-md shadow-2xl p-3 w-48 pointer-events-none transform -translate-x-full -translate-y-1/2 transition-opacity ${isDarkMode ? 'bg-[#252526] text-white border border-[#4b4b4b]' : 'bg-white text-slate-800 border border-slate-300'}`} style={{ top: hoveredShape.y, left: hoveredShape.x - 10 }}>
+            <div className="flex flex-col items-center gap-2">
+               <div className={`w-12 h-12 flex items-center justify-center p-1 rounded border ${isDarkMode ? 'bg-[#1e1e1e] border-[#4b4b4b]' : 'bg-slate-50 border-slate-200'}`}>
+                  {hoveredShape.item.type === 'text' || hoveredShape.item.type === 'image' ? hoveredShape.item.icon : <div className="w-full h-full">{hoveredShape.item.icon}</div>}
+               </div>
+               <div className="font-bold text-[13px] text-center">{hoveredShape.item.label}</div>
+               <div className={`text-center leading-snug ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{shapeDescriptions[hoveredShape.item.type] || 'A flowchart shape.'}</div>
+            </div>
+            <div className={`absolute right-[-5px] top-1/2 -translate-y-1/2 w-2 h-2 transform rotate-45 border-t border-r ${isDarkMode ? 'bg-[#252526] border-[#4b4b4b]' : 'bg-white border-slate-300'}`}></div>
+          </div>
+        )}
+
+        {/* CONTEXT MENU */}
+        {contextMenu && (
+          <div style={{ top: contextMenu.top, left: contextMenu.left }} className="fixed z-[100] bg-white border border-slate-200 shadow-xl rounded-md py-1 w-36 text-sm flex flex-col z-[10000]">
+            {contextMenu.type === 'node' && <button onClick={handleEditItem} className="w-full text-left px-4 py-2 hover:bg-slate-100 text-slate-700 transition">Edit Text</button>}
+            {contextMenu.type === 'edge' && <button onClick={handleEditItem} className="w-full text-left px-4 py-2 hover:bg-slate-100 text-slate-700 transition">Edit Label</button>}
+            {(contextMenu.type === 'node' || contextMenu.type === 'multi') && <button onClick={handleCopy} className="w-full text-left px-4 py-2 hover:bg-slate-100 text-slate-700 transition">Copy</button>}
+            {(contextMenu.type === 'node' || contextMenu.type === 'multi') && <button onClick={handleDuplicate} className="w-full text-left px-4 py-2 hover:bg-slate-100 text-slate-700 transition">Duplicate</button>}
+            {contextMenu.type === 'pane' && canEditCanvas && <button onClick={handlePaste} className="w-full text-left px-4 py-2 transition hover:bg-slate-100 text-slate-700 cursor-pointer">Paste</button>}
+            {(contextMenu.type === 'node' || contextMenu.type === 'multi' || contextMenu.type === 'edge') && <div className="h-px bg-slate-100 w-full my-1" />}
+            {(contextMenu.type === 'node' || contextMenu.type === 'multi' || contextMenu.type === 'edge') && <button onClick={handleDeleteItem} className="w-full text-left px-4 py-2 hover:bg-red-50 text-red-600 transition font-medium">{contextMenu.type === 'multi' ? 'Delete All' : 'Delete'}</button>}
+          </div>
+        )}
+
+        <WorkspaceTopBar
+          theme={theme}
+          isDarkMode={isDarkMode}
+          diagramTitle={diagramTitle}
+          isTitleEditable={!isLocalArtifact}
+          onDiagramTitleChange={setDiagramTitle}
+          leftContent={(
+            <TopLeftToolbar
+              theme={theme}
+              workspaceRoot={workspaceSnapshot.workspaceRoot}
+              currentFilePath={workspaceSnapshot.currentFilePath}
+              currentSource={workspaceSnapshot.source}
+              workspaceCapability={workspaceSnapshot.workspaceCapability}
+              workspaceFiles={workspaceFiles}
+              recentWorkspaces={recentWorkspaces}
+              hasRestorableDraft={hasRestorableDraft}
+              isSidebarOpen={isSidebarOpen}
+              isTerminalOpen={isTerminalOpen}
+              isRightPanelOpen={isRightPanelOpen}
+              canSaveToLocalFile={canSaveToLocalFile}
+              canSaveAsLocalFile={canSaveAsLocalFile}
+              canRefreshWorkspace={!!activeWorkspaceHandle}
+              onAction={handleTopLeftAction}
+              onOpenWorkspaceFile={(file) => {
+                void handleOpenWorkspaceFile(file);
+              }}
+              onOpenRecentWorkspace={(entry) => {
+                void handleOpenRecentWorkspace(entry);
+              }}
+            />
+          )}
+          workspaceLabel={workspaceLabel}
+          documentHint={documentHint}
+          rightContent={(
+            <TopRightCommandBar
+              theme={theme}
+              isDarkMode={isDarkMode}
+              currentUser={currentUser}
+              saveState={effectiveSaveState}
+              canSave={canCloudSave}
+              canShare={!!currentDiagramId && currentArtifactKind === "diagram"}
+              canExport={!!currentDiagramId && currentArtifactKind === "diagram"}
+              isSidebarOpen={isSidebarOpen}
+              isTerminalOpen={isTerminalOpen}
+              isRightPanelOpen={isRightPanelOpen}
+              onOpenAuth={() => setAuthModal('login')}
+              onLogout={handleLogout}
+              onToggleTheme={() => setIsDarkMode(!isDarkMode)}
+              onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+              onToggleTerminal={() => setIsTerminalOpen(!isTerminalOpen)}
+              onToggleRightPanel={() => setIsRightPanelOpen(!isRightPanelOpen)}
+              onSave={handleSave}
+              onShare={handleShare}
+              onExport={() => handleExport('svg')}
+            />
+          )}
+        />
+
+        <div className="flex flex-1 overflow-hidden">
+          {/* EXPLORER */}
+          {isSidebarOpen && (
+            <div style={{ width: explorerWidth }} className={`flex flex-col shrink-0 overflow-y-auto ${theme.bgMain}`}>
+              <div className={`flex items-center justify-between px-4 py-2 text-xs font-semibold uppercase tracking-wider ${theme.textMuted}`}><span>Explorer</span><MoreHorizontal size={14} className={`cursor-pointer ${isDarkMode ? 'hover:text-white' : 'hover:text-black'}`} /></div>
+              <div className="flex flex-col text-[13px] mt-1">
+                <div className={`flex items-center gap-1 px-2 py-1 cursor-pointer ${theme.itemHover} transition`}><ChevronDown size={14} /> <Folder size={14} className="text-blue-400" /> <span className="font-semibold">{workspaceRoot ?? "BA_WORKSPACE"}</span></div>
+                <div onClick={() => setIsTabOpen(true)} className={`flex items-center gap-1 pl-6 pr-2 py-1 cursor-pointer ${isTabOpen ? theme.itemActive : theme.itemHover} ${isDarkMode && isTabOpen ? 'border-l-2 border-blue-500' : ''}`}><FileCode size={14} className="text-yellow-400" /> <span className={isDarkMode ? 'text-white' : 'font-medium'}>{currentEditorLabel}</span></div>
+                {workspaceFiles.filter((file) => file.path !== currentFilePath).map((file) => (
+                  <div
+                    key={file.path}
+                    onClick={() => {
+                      void handleOpenWorkspaceFile(file);
+                    }}
+                    className={`flex items-center gap-1 pl-6 pr-2 py-1 cursor-pointer ${currentFilePath === file.path ? theme.itemActive : theme.itemHover} transition text-[13px]`}
+                  >
+                    <FileIcon size={14} className="text-slate-400 shrink-0" />
+                    <span className="truncate">{file.path}</span>
+                  </div>
+                ))}
+                {authToken && diagramList.map(d => (
+                  <div
+                    key={d.id}
+                    onClick={() => handleLoadDiagram(d.id)}
+                    className={`flex items-center gap-1 pl-6 pr-2 py-1 cursor-pointer ${currentDiagramId === d.id ? theme.itemActive : theme.itemHover} transition text-[13px]`}
+                  >
+                    <FileIcon size={14} className="text-slate-400 shrink-0" />
+                    <span className="truncate">{d.title}</span>
+                  </div>
+                ))}
+                {!authToken && (
+                  <div className={`pl-6 pr-2 py-1 text-xs ${theme.textMuted} italic`}>Login to see saved diagrams</div>
+                )}
+              </div>
+            </div>
+          )}
+          {isSidebarOpen && <div className={`w-1 cursor-col-resize hover:bg-blue-500 active:bg-blue-600 transition-colors z-10 ${theme.border} border-l`} onMouseDown={() => setIsDraggingExplorer(true)} />}
+
+          <div className="flex flex-1 overflow-hidden">
+            {/* EDITOR */}
+            <div style={{ width: editorWidth }} className="flex flex-col shrink-0 min-w-[200px] h-full overflow-hidden">
+              {isTabOpen ? (
+                <div className="flex flex-col flex-1 overflow-hidden">
+                  <div className={`flex items-center h-9 ${theme.bgMain} border-b ${theme.border} overflow-x-auto shrink-0`}>
+                    <div className={`flex items-center gap-2 px-3 py-1.5 ${theme.bgMain} border-t-2 ${theme.editorTabTop} text-[13px] cursor-pointer group`}>
+                      <FileCode size={14} className="text-yellow-400" /> <span className={isDarkMode ? 'text-white' : 'text-black'}>{currentEditorLabel}</span>
+                      <div className="ml-1 p-[2px] rounded-sm opacity-0 group-hover:opacity-100 hover:bg-slate-500/30 transition-opacity" onClick={(e) => { e.stopPropagation(); setIsTabOpen(false); }} title="Close Tab"><X size={14} className={isDarkMode ? "text-slate-300 hover:text-white" : "text-slate-600 hover:text-black"} /></div>
+                    </div>
+                  </div>
+                  <div className={`flex-1 overflow-hidden ${theme.bgMain}`} onKeyDown={(e) => e.stopPropagation()}>
+                    <Editor height="100%" defaultLanguage="markdown" theme={isDarkMode ? "vs-dark" : "light"} value={code} onChange={(val) => setCode(val || "")} onMount={handleEditorDidMount} options={{ minimap: { enabled: false }, fontSize: 14, wordWrap: "on", padding: { top: 16 } }} />
+                  </div>
+                </div>
+              ) : (
+                <div className={`flex items-center justify-center flex-col flex-1 shrink-0 overflow-hidden ${theme.bgMain}`}><FileCode size={48} className={theme.textMuted} strokeWidth={1} /><p className={`mt-4 text-sm ${theme.textMuted}`}>No file is open</p><button onClick={() => setIsTabOpen(true)} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">Open diagram.mmd</button></div>
+              )}
+
+              {/* TERMINAL */}
+              {isTerminalOpen && (
+                <div className={`h-48 flex flex-col shrink-0 border-t ${theme.border} ${theme.bgMain}`}>
+                   <div className={`flex text-[11px] uppercase tracking-wider ${theme.textMuted} border-b ${theme.border} px-4 py-1 gap-4 shrink-0`}>
+                      <span className={`cursor-pointer border-b ${isDarkMode ? 'border-blue-500 text-slate-200' : 'border-blue-600 text-slate-800'}`}>Problems</span>
+                      <span className="cursor-pointer hover:text-slate-200">Output</span>
+                      <span className="cursor-pointer hover:text-slate-200">Terminal</span>
+                   </div>
+                   <div className="p-3 text-[13px] font-mono overflow-y-auto flex-1">
+                     {parseError ? (
+                       <div className="text-red-500">
+                         <p className="font-semibold mb-1">[{parseError.line}] {parseError.message}</p>
+                         <p className="text-slate-400">{parseError.lineText}</p>
+                         <p>{"^".repeat(parseError.lineText.length)}</p>
+                       </div>
+                     ) : (
+                       <div className="text-green-500/80">No problems have been detected in the workspace.</div>
+                     )}
+                   </div>
+                </div>
+              )}
+            </div>
+
+            <div className={`w-1 cursor-col-resize hover:bg-blue-500 active:bg-blue-600 transition-colors z-10 ${theme.border} border-l`} onMouseDown={() => setIsDraggingEditor(true)} />
+
+            {/* CANVAS AREA */}
+            <div className="flex-1 relative bg-slate-50 min-w-[200px] flex flex-col" ref={reactFlowWrapper}>
+              <CanvasActionBar
+                isDrawingMode={isDrawingMode}
+                canEditCanvas={canEditCanvas}
+                canSyncCodeToDiagram={canSyncCodeToDiagram}
+                isDrawingSettingsOpen={showDrawSettings}
+                isDrawingSettingsVisible={isDrawingMode}
+                onSyncCodeToDiagram={handleSyncCodeToDiagram}
+                onAutoLayout={handleAutoLayout}
+                onToggleDrawingMode={() => {
+                  setIsDrawingMode((currentValue) => {
+                    const nextValue = !currentValue;
+                    setShowDrawSettings(nextValue);
+                    if (!nextValue) {
+                      setDrawTool("pen");
+                    }
+                    return nextValue;
+                  });
+                }}
+                onToggleDrawingSettings={() => setShowDrawSettings((currentValue) => !currentValue)}
+              />
+
+              
+              {/* LỚP PHỦ MARQUEE SELECTION */}
+              {selectionBox && (
+                <div className="absolute inset-0 z-[49] pointer-events-none overflow-hidden">
+                  <div 
+                    className="absolute bg-blue-500/20 border border-blue-500"
+                    style={{
+                      left: Math.min(selectionBox.startX, selectionBox.currX) * transform[2] + transform[0],
+                      top: Math.min(selectionBox.startY, selectionBox.currY) * transform[2] + transform[1],
+                      width: Math.abs(selectionBox.startX - selectionBox.currX) * transform[2],
+                      height: Math.abs(selectionBox.startY - selectionBox.currY) * transform[2]
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* LỚP PHỦ VẼ TAY CHẶN SỰ KIỆN */}
+              {isDrawingMode && drawTool === 'pen' && (
+                <div
+                  className="absolute inset-0 z-[49]"
+                  style={{ cursor: 'crosshair', touchAction: 'none' }}
+                  onPointerDown={handleDrawStart}
+                  onPointerMove={handleDrawMove}
+                  onPointerUp={handleDrawEnd}
+                  onPointerLeave={handleDrawEnd}
+                />
+              )}
+
+              {/* ART MODE SETTINGS DROPDOWN */}
+              {isDrawingMode && showDrawSettings && (
+                <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-3 px-4 py-3 bg-white rounded-lg shadow-xl border border-slate-200 w-[280px]">
+                   <div className="flex gap-2 items-center justify-center mb-1">
+                     <button onClick={() => setDrawTool('pen')} className={`p-2 rounded-md transition ${drawTool === 'pen' ? 'bg-blue-100 text-blue-600 shadow-inner' : 'hover:bg-slate-100 text-slate-600 border border-slate-200'}`} title="Pen Tool"><PenTool size={18} /></button>
+                     <button onClick={() => setDrawTool('eraser')} className={`p-2 rounded-md transition ${drawTool === 'eraser' ? 'bg-red-100 text-red-600 shadow-inner' : 'hover:bg-slate-100 text-slate-600 border border-slate-200'}`} title="Eraser Tool (Click drawn paths to remove)"><Eraser size={18} /></button>
+                   </div>
+                   
+                   {/* COLOR RIBBON */}
+                   <div className={`relative w-full h-8 rounded-md cursor-crosshair shadow-inner ${drawTool === 'eraser' ? 'opacity-30 pointer-events-none' : ''}`} 
+                        style={{ background: 'linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%)' }}
+                        onMouseDown={handleColorPick} 
+                        onMouseMove={(e) => e.buttons === 1 && handleColorPick(e)}>
+                      <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] pointer-events-none font-bold text-lg" style={{ left: `${(hue/360)*100}%` }}>+</div>
+                   </div>
+
+                   <div className={`flex flex-col gap-1 ${drawTool === 'eraser' ? 'opacity-30 pointer-events-none' : ''}`}>
+                      <div className="flex justify-between text-xs text-slate-500 font-medium"><span>Size: {drawWidth}px</span></div>
+                      <input type="range" min="1" max="20" value={drawWidth} onChange={(e) => setDrawWidth(Number(e.target.value))} className="w-full accent-blue-600" />
+                   </div>
+
+                   <div className={`flex flex-col gap-1 ${drawTool === 'eraser' ? 'opacity-30 pointer-events-none' : ''}`}>
+                      <div className="flex justify-between text-xs text-slate-500 font-medium"><span>Style:</span></div>
+                      <select value={drawStyle} onChange={(e) => setDrawStyle(e.target.value)} className="text-sm bg-slate-50 border border-slate-200 rounded p-1 outline-none text-slate-700">
+                        <option value="solid">Pen</option>
+                        <option value="dashed">Dashed</option>
+                        <option value="highlighter">Highlighter</option>
+                      </select>
+                   </div>
+                </div>
+              )}
+              
+              <div ref={coordsRef} className={`absolute top-4 right-4 z-10 flex flex-wrap justify-end gap-x-2 max-w-[120px] px-3 py-1 text-[11px] font-mono rounded-md shadow border ${theme.border} ${theme.bgMain} ${theme.text}`}>
+                <span id="coord-x">X: 0</span>
+                <span id="coord-y">Y: 0</span>
+              </div>
+
+              <div className={`absolute top-4 left-4 z-10 px-2 py-1 text-xs font-medium rounded-md shadow border ${theme.border} ${theme.bgMain} ${theme.text}`}>{(zoomLevel * 100).toFixed(0)}%</div>
+              
+              <div className="flex-1 w-full h-full pointer-events-none" style={{ zIndex: 10 }}>
+                <div
+                  className="w-full h-full pointer-events-auto"
+                  onPointerDownCapture={(event) => {
+                    if ((event.target as HTMLElement).closest(".react-flow__pane")) {
+                      onPanePointerDown(event);
+                    }
+                  }}
+                  onPointerMove={handleCanvasPointerMove}
+                  onPointerUpCapture={onPanePointerUp}
+                  onPointerLeave={onPanePointerUp}
+                  onContextMenuCapture={(event) => {
+                    if ((event.target as HTMLElement).closest(".react-flow__pane")) {
+                      onPaneContextMenu(event);
+                    }
+                  }}
+                  onMouseUp={handleCanvasMouseUp}
+                  onMouseDown={handleCanvasMouseClick}
+                >
+                  <ReactFlow 
+                    nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
+                    onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} 
+                    onNodeDragStop={onNodeDragStop}
+                    onConnect={onConnect} onMove={handleMove} 
+                    onDrop={onDrop} onDragOver={onDragOver} onNodeContextMenu={onNodeContextMenu} 
+                    onEdgeContextMenu={onEdgeContextMenu}
+                    onPaneClick={closeContextMenu}
+                    
+                    nodesDraggable={!isDrawingMode}
+                    nodesConnectable={!isDrawingMode}
+                    elementsSelectable={!isDrawingMode}
+                    panOnDrag={!isDrawingMode && !selectionBox}
+
+                    panActivationKeyCode={null} 
+                    fitView
+                  >
+                    <Background color="#cbd5e1" gap={16} />
+                    <Controls position="bottom-left" className="bg-white border-slate-200 fill-slate-600 mb-4 ml-4 shadow-sm rounded-md" />
+                    
+                    {/* NÉT VẼ TẠM THỜI (Đồng bộ Zoom) */}
+                    {currentDrawPath && currentDrawPath.length > 0 && (
+                      <svg className="absolute inset-0 w-full h-full pointer-events-none z-[100]" style={{ overflow: 'visible' }}>
+                        <g transform={`translate(${transform[0]}, ${transform[1]}) scale(${transform[2]})`}>
+                          <path 
+                             d={`M ${currentDrawPath[0].x} ${currentDrawPath[0].y} ` + currentDrawPath.map(p => `L ${p.x} ${p.y}`).join(' ')} 
+                             fill="none" stroke={drawColor} 
+                             strokeWidth={drawStyle === 'highlighter' ? drawWidth * 3 : drawWidth} 
+                             strokeDasharray={drawStyle === 'dashed' ? '8 8' : 'none'} 
+                             strokeLinecap="round" strokeLinejoin="round" 
+                             opacity={drawStyle === 'highlighter' ? 0.4 : 1} 
+                          />
+                        </g>
+                      </svg>
+                    )}
+
+                    {/* MINIMAP */}
+                    <div className="absolute bottom-4 right-4 z-[101] flex flex-col items-end pointer-events-auto" onMouseEnter={() => setIsMiniMapHovered(true)} onMouseLeave={() => setIsMiniMapHovered(false)}>
+                       {isMiniMapOpen ? (
+                          <div className="relative rounded-md shadow border border-slate-200 overflow-hidden bg-white">
+                             <MiniMap style={{ position: 'relative', bottom: 'auto', right: 'auto', margin: 0 }} nodeColor="#cbd5e1" maskColor="rgba(248, 250, 252, 0.7)" nodeBorderRadius={8} />
+                             {isMiniMapHovered && (
+                                <button onClick={() => setIsMiniMapOpen(false)} className="absolute top-1 right-1 p-1 bg-white/90 hover:bg-slate-100 text-slate-600 hover:text-blue-600 rounded shadow-sm z-50">
+                                   <Minus size={12} strokeWidth={3} />
+                                </button>
+                             )}
+                          </div>
+                       ) : (
+                          <button onClick={() => setIsMiniMapOpen(true)} className={`p-2 rounded-md shadow border ${theme.border} ${theme.bgMain} text-slate-600 hover:text-blue-600 cursor-pointer`}>
+                             <Square size={16} strokeWidth={2} />
+                          </button>
+                       )}
+                    </div>
+                  </ReactFlow>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* CỘT THƯ VIỆN KÉO THẢ */}
+          {isRightPanelOpen && (
+            <div className={`w-1 cursor-col-resize hover:bg-blue-500 active:bg-blue-600 transition-colors z-10 ${theme.border} border-l`} onMouseDown={() => setIsDraggingRightPanel(true)} />
+          )}
+
+          {isRightPanelOpen && (
+            <div style={{ width: rightPanelWidth }} className={`flex flex-col shrink-0 overflow-y-auto ${theme.bgMain} pb-10`}>
+              <div className={`flex items-center px-4 py-2 text-xs font-semibold uppercase tracking-wider ${theme.textMuted} border-b ${theme.border}`}><span>Shapes Library</span></div>
+              {SHAPE_CATEGORIES.map((category) => {
+                const isOpen = openShapeMenus[category];
+                return (
+                  <div key={category} className="flex flex-col">
+                    <div onClick={() => toggleShapeMenu(category)} className={`flex items-center gap-2 px-2 py-2 cursor-pointer ${theme.itemHover} border-b ${theme.border} select-none`}>
+                      {isOpen ? <ChevronDown size={16} className={theme.textMuted} /> : <ChevronRight size={16} className={theme.textMuted} />} <span className="text-[13px] font-semibold">{category}</span>
+                    </div>
+                    {isOpen && <div className={`flex flex-wrap content-start gap-2 p-3 border-b ${theme.border}`}>{renderShapeItems(category)}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
         {/* Auth Modal */}
         {authModal && (
           <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60" onClick={() => setAuthModal(null)}>
@@ -2352,7 +2720,8 @@ const IDEPageContent = () => {
             </div>
           </div>
         )}
-    </div>
+      </div>
+    </>
   );
 };
 

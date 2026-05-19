@@ -1,8 +1,10 @@
-# 🎨 Beauty Maid: The Ultimate Diagramming IDE Online
+# 🎨 Dream Maid: The Ultimate Diagramming IDE Online
 
-Welcome to **Beauty Maid**, a cutting-edge web-based Integrated Development Environment designed specifically for Business Analysts, Software Architects, and Systems Engineers. 
+*Dream Maid, Dream Aid*
 
-We asked ourselves a simple question: *If Mermaid.js can magically generate diagrams from code, what if we could edit the diagram visually and instantly get the code back?* Beauty Maid is the answer: A true **Two-Way Synchronization** engine between Markdown (Mermaid syntax) and a highly interactive, Draw.io-level visual canvas.
+Welcome to **Dream Maid**, a cutting-edge web-based Integrated Development Environment designed specifically for Business Analysts, Software Architects, and Systems Engineers. 
+
+We asked ourselves a simple question: *If [Mermaid.js](https://github.com/mermaid-js/mermaid.git) can magically generate diagrams from code, what if we could edit the diagram visually and instantly get the code back?* Dream Maid is the answer: A true **Two-Way Synchronization** engine between Markdown (Mermaid syntax) and a highly interactive, Draw.io-level visual canvas.
 
 ## ✨ Core Features
 
@@ -21,8 +23,8 @@ We asked ourselves a simple question: *If Mermaid.js can magically generate diag
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/RevDra/Beauty-Maid.git](https://github.com/RevDra/Beauty-Maid.git)
-    cd Beauty-Maid
+    git clone https://github.com/RevDra/UBA_Unified-Business-Analytics.git
+    cd UBA_Unified-Business-Analytics
     ```
 2.  **Install dependencies:**
     ```bash
@@ -36,7 +38,7 @@ We asked ourselves a simple question: *If Mermaid.js can magically generate diag
 
 ## 🛠️ Built With
 
-* **Next.js 16** (App Router)
+* **Next.js 16.2** (App Router)
 * **React Flow** (Visual Node Engine)
 * **Monaco Editor** (VS Code's internal editor engine)
 * **Dagre** (Directed graph auto-layout algorithm)
