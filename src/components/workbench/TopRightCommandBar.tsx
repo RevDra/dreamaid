@@ -10,6 +10,8 @@ interface TopRightCommandBarProps {
   currentUser: User | null;
   saveState: SaveState;
   canSave: boolean;
+  saveActionLabel?: string;
+  saveActionTitle?: string;
   canShare: boolean;
   canExport: boolean;
   isSidebarOpen: boolean;
@@ -44,6 +46,8 @@ export default function TopRightCommandBar({
   currentUser,
   saveState,
   canSave,
+  saveActionLabel = "Save",
+  saveActionTitle = "Save the current artifact",
   canShare,
   canExport,
   isSidebarOpen,
@@ -72,10 +76,10 @@ export default function TopRightCommandBar({
           onClick={onSave}
           disabled={!canSave || isSaving}
           className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${actionButtonClass(theme, { active: canSave, disabled: !canSave || isSaving })}`}
-          title={canSave ? "Save diagram" : "Cloud save currently supports Mermaid diagrams only"}
+          title={canSave ? saveActionTitle : "Saving this artifact is not available in the current browser context"}
         >
           <Save size={14} />
-          <span className="hidden xl:inline">{isSaving ? "Saving..." : "Save"}</span>
+          <span className="hidden xl:inline">{isSaving ? "Saving..." : saveActionLabel}</span>
         </button>
 
         <button

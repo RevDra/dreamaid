@@ -1548,7 +1548,7 @@ const IDEPageContent = () => {
     setSaveState("idle");
   };
 
-  const handleSave = async () => {
+  const handleCloudSave = useCallback(async () => {
     if (!authToken) { setAuthModal('login'); return; }
     setSaveState("saving");
     try {
@@ -1587,7 +1587,7 @@ const IDEPageContent = () => {
       setSaveState("error");
       alert(e instanceof Error ? e.message : 'Save failed');
     }
-  };
+  }, [authToken, clearStoredLocalDraft, code, currentDiagramId, diagramTitle, markDiagramPersisted, rememberWorkspace]);
 
   const handleLoadDiagram = useCallback(async (id: string) => {
     if (!confirmReplaceCurrentDocument()) {
@@ -1869,6 +1869,39 @@ const IDEPageContent = () => {
     }
   }, [clearStoredLocalDraft, code, currentArtifactKind, currentFilePath, diagramTitle, hasFreehandDrawings, markDiagramPersisted, rememberWorkspace, workspaceCapability, workspaceRoot]);
 
+  const handlePrimarySave = useCallback(async () => {
+    const prefersLocalSave = workspaceSource === "local" || currentArtifactKind !== "diagram" || !!activeWorkspaceHandle;
+    const canWriteCurrentLocalFile = !!currentLocalFile && !hasFreehandDrawings;
+    const canCreateLocalFile = workspaceCapability !== "unavailable" && !hasFreehandDrawings;
+
+    if (prefersLocalSave) {
+      if (canWriteCurrentLocalFile) {
+        await handleSaveLocalFile();
+        return;
+      }
+
+      if (canCreateLocalFile) {
+        await handleSaveLocalFileAs();
+        return;
+      }
+
+      alert("Local file access works best in Chrome or Edge in this preview.");
+      return;
+    }
+
+    await handleCloudSave();
+  }, [
+    activeWorkspaceHandle,
+    currentArtifactKind,
+    currentLocalFile,
+    hasFreehandDrawings,
+    handleSaveLocalFile,
+    handleSaveLocalFileAs,
+    handleCloudSave,
+    workspaceCapability,
+    workspaceSource,
+  ]);
+
   const handleRestoreLocalDraft = useCallback(() => {
     if (typeof window === "undefined") {
       return;
@@ -1882,7 +1915,12 @@ const IDEPageContent = () => {
       }
 
       const localDraft = JSON.parse(storedDraft) as LocalDraftSnapshot;
-      const restoredSource: WorkspaceSource = localDraft.source === "remote" ? "remote" : "draft";
+      const hasLocalWorkspaceContext = Boolean(localDraft.workspaceRoot || localDraft.currentFilePath);
+      const restoredSource: WorkspaceSource = localDraft.source === "remote"
+        ? "remote"
+        : localDraft.source === "local" || hasLocalWorkspaceContext
+          ? "local"
+          : "draft";
       if (!confirmReplaceCurrentDocument()) {
         return;
       }
@@ -1898,8 +1936,8 @@ const IDEPageContent = () => {
         diagramId: restoredSource === "remote" ? localDraft.diagramId : null,
         source: restoredSource,
         artifactKind: localDraft.artifactKind,
-        filePath: restoredSource === "remote" ? localDraft.currentFilePath : null,
-        workspaceRoot: restoredSource === "remote" ? localDraft.workspaceRoot : null,
+        filePath: restoredSource === "draft" ? null : localDraft.currentFilePath,
+        workspaceRoot: restoredSource === "draft" ? null : localDraft.workspaceRoot,
         localFile: null,
         drawingNodes: localDraft.drawingNodes,
         persisted: null,
@@ -2098,6 +2136,26 @@ const IDEPageContent = () => {
   const canCloudSave = currentArtifactKind === "diagram" && workspaceSource !== "local" && !hasFreehandDrawings;
   const canSaveToLocalFile = !!currentLocalFile && !hasFreehandDrawings;
   const canSaveAsLocalFile = workspaceCapability !== "unavailable" && !hasFreehandDrawings;
+  const prefersLocalSave = workspaceSource === "local" || currentArtifactKind !== "diagram" || !!activeWorkspaceHandle;
+  const canTopBarSave = currentArtifactKind === "diagram"
+    ? prefersLocalSave
+      ? (canSaveToLocalFile || canSaveAsLocalFile)
+      : canCloudSave
+    : (canSaveToLocalFile || canSaveAsLocalFile);
+  const saveActionLabel = prefersLocalSave
+    ? canSaveToLocalFile
+      ? "Save"
+      : canSaveAsLocalFile
+        ? "Save as"
+        : "Save"
+    : "Save";
+  const saveActionTitle = prefersLocalSave
+    ? canSaveToLocalFile
+      ? "Save the current local artifact"
+      : canSaveAsLocalFile
+        ? "Create a local file for the current artifact"
+        : "Local save works best in Chrome or Edge"
+    : "Save diagram to cloud";
 
   const theme: WorkspaceTheme = isDarkMode ? { bgMain: "bg-[#1e1e1e]", text: "text-[#cccccc]", textMuted: "text-slate-400", border: "border-[#2b2b2b]", toolbar: "bg-[#181818]", hover: "hover:bg-[#333333]", searchBg: "bg-[#2b2b2b]", searchBorder: "border-[#3c3c3c]", itemHover: "hover:bg-[#2a2d2e]", itemActive: "bg-[#37373d]", editorTabTop: "border-blue-500", shapeBorder: "border-[#4b4b4b]", shapeFill: "bg-[#252526]" } : { bgMain: "bg-white", text: "text-slate-800", textMuted: "text-slate-500", border: "border-slate-300", toolbar: "bg-[#f3f3f3]", hover: "hover:bg-[#e4e4e4]", searchBg: "bg-white", searchBorder: "border-slate-300", itemHover: "hover:bg-slate-100", itemActive: "bg-[#e4e6f1] text-blue-700", editorTabTop: "border-blue-600", shapeBorder: "border-slate-300", shapeFill: "bg-white" };
   const libFill = isDarkMode ? '#333333' : '#ffffff';
@@ -2365,7 +2423,9 @@ const IDEPageContent = () => {
               isDarkMode={isDarkMode}
               currentUser={currentUser}
               saveState={effectiveSaveState}
-              canSave={canCloudSave}
+              canSave={canTopBarSave}
+              saveActionLabel={saveActionLabel}
+              saveActionTitle={saveActionTitle}
               canShare={!!currentDiagramId && currentArtifactKind === "diagram"}
               canExport={!!currentDiagramId && currentArtifactKind === "diagram"}
               isSidebarOpen={isSidebarOpen}
@@ -2377,7 +2437,9 @@ const IDEPageContent = () => {
               onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
               onToggleTerminal={() => setIsTerminalOpen(!isTerminalOpen)}
               onToggleRightPanel={() => setIsRightPanelOpen(!isRightPanelOpen)}
-              onSave={handleSave}
+              onSave={() => {
+                void handlePrimarySave();
+              }}
               onShare={handleShare}
               onExport={() => handleExport('svg')}
             />
