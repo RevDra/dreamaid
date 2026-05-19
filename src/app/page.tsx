@@ -31,13 +31,15 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import dagre from "dagre";
-import { 
+import {
   Play, Search, Folder, FileCode, ChevronDown, ChevronRight, Menu,
   MoreHorizontal, Sun, Moon, Type, Circle, User, StickyNote,
   MessageSquare, Box, X, Wand2, PanelLeft, PanelBottom, PanelRight,
   Hexagon, Triangle, Database, Cloud, FileText, RotateCw, Upload,
-  Minus, Square, PenTool, Eraser
+  Minus, Square, PenTool, Eraser,
+  Save, Share2, FileDown, LogIn, LogOut, PlusCircle, File as FileIcon
 } from "lucide-react";
+import * as api from "../lib/api";
 
 // --- QUẢN LÝ ẢNH UPLOAD ---
 const globalImageRegistry: Record<string, string> = {};
@@ -590,6 +592,21 @@ const IDEPageContent = () => {
 
   // Flow State
   const [code, setCode] = useState<string>("graph TD;\n    KH[\"Customer\"] %% shape:actor x:100 y:100 w:80 h:80 rot:0\n    BA[\"Business Analyst\"] %% shape:rectangle x:300 y:250 w:120 h:40 rot:0\n\n    KH -->|Send Request| BA;\n");
+
+  // Auth & persistence state
+  const [authToken, setAuthToken] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('ba_ide_token');
+    return null;
+  });
+  const [currentUser, setCurrentUser] = useState<api.User | null>(null);
+  const [authModal, setAuthModal] = useState<'login' | 'register' | null>(null);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [currentDiagramId, setCurrentDiagramId] = useState<string | null>(null);
+  const [diagramTitle, setDiagramTitle] = useState('Untitled');
+  const [diagramList, setDiagramList] = useState<api.DiagramSummary[]>([]);
+  const [shareModal, setShareModal] = useState<api.ShareLinkResponse | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
@@ -871,11 +888,88 @@ const IDEPageContent = () => {
     closeContextMenu();
   }, [contextMenu, nodes, edges, updateCodeFromFlow, closeContextMenu]);
 
-  const theme = isDarkMode ? { bgMain: "bg-[#1e1e1e]", text: "text-[#cccccc]", textMuted: "text-slate-400", border: "border-[#2b2b2b]", toolbar: "bg-[#181818]", hover: "hover:bg-[#333333]", searchBg: "bg-[#2b2b2b]", searchBorder: "border-[#3c3c3c]", itemHover: "hover:bg-[#2a2d2e]", itemActive: "bg-[#37373d]", editorTabTop: "border-blue-500" } : { bgMain: "bg-white", text: "text-slate-800", textMuted: "text-slate-500", border: "border-slate-300", toolbar: "bg-[#f3f3f3]", hover: "hover:bg-[#e4e4e4]", searchBg: "bg-white", searchBorder: "border-slate-300", itemHover: "hover:bg-slate-100", itemActive: "bg-[#e4e6f1] text-blue-700", editorTabTop: "border-blue-600" };
-  
+  // Load user and diagrams when token exists
+  useEffect(() => {
+    if (!authToken) return;
+    api.me().then(setCurrentUser).catch(() => {
+      api.clearToken();
+      setAuthToken(null);
+    });
+    api.listDiagrams().then(setDiagramList).catch(() => {});
+  }, [authToken]);
+
+  const handleAuth = async (mode: 'login' | 'register') => {
+    setAuthError(null);
+    try {
+      const fn = mode === 'register' ? api.register : api.login;
+      const res = await fn(authEmail, authPassword);
+      api.setToken(res.token);
+      setAuthToken(res.token);
+      setCurrentUser(res.user);
+      setAuthModal(null);
+      setAuthEmail('');
+      setAuthPassword('');
+      api.listDiagrams().then(setDiagramList).catch(() => {});
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : 'Authentication failed');
+    }
+  };
+
+  const handleLogout = () => {
+    api.clearToken();
+    setAuthToken(null);
+    setCurrentUser(null);
+    setDiagramList([]);
+    setCurrentDiagramId(null);
+  };
+
+  const handleSave = async () => {
+    if (!authToken) { setAuthModal('login'); return; }
+    try {
+      if (currentDiagramId) {
+        await api.updateDiagram(currentDiagramId, { title: diagramTitle, content: code });
+      } else {
+        const created = await api.createDiagram(diagramTitle, code);
+        setCurrentDiagramId(created.id);
+      }
+      api.listDiagrams().then(setDiagramList).catch(() => {});
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Save failed');
+    }
+  };
+
+  const handleLoadDiagram = async (id: string) => {
+    try {
+      const diagram = await api.getDiagram(id);
+      setCurrentDiagramId(diagram.id);
+      setDiagramTitle(diagram.title);
+      setCode(diagram.content);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Load failed');
+    }
+  };
+
+  const handleShare = async () => {
+    if (!authToken || !currentDiagramId) {
+      alert('Save the diagram first before sharing.');
+      return;
+    }
+    try {
+      const result = await api.createShareLink(currentDiagramId, 'read');
+      setShareModal(result);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Share failed');
+    }
+  };
+
+  const handleExport = (format: 'svg' | 'png') => {
+    if (!currentDiagramId) { alert('Save the diagram first to export.'); return; }
+    window.open(api.exportUrl(currentDiagramId, format), '_blank');
+  };
+
+  const theme = isDarkMode ? { bgMain: "bg-[#1e1e1e]", text: "text-[#cccccc]", textMuted: "text-slate-400", border: "border-[#2b2b2b]", toolbar: "bg-[#181818]", hover: "hover:bg-[#333333]", searchBg: "bg-[#2b2b2b]", searchBorder: "border-[#3c3c3c]", itemHover: "hover:bg-[#2a2d2e]", itemActive: "bg-[#37373d]", editorTabTop: "border-blue-500", shapeBorder: "border-[#4b4b4b]", shapeFill: "bg-[#252526]" } : { bgMain: "bg-white", text: "text-slate-800", textMuted: "text-slate-500", border: "border-slate-300", toolbar: "bg-[#f3f3f3]", hover: "hover:bg-[#e4e4e4]", searchBg: "bg-white", searchBorder: "border-slate-300", itemHover: "hover:bg-slate-100", itemActive: "bg-[#e4e6f1] text-blue-700", editorTabTop: "border-blue-600", shapeBorder: "border-slate-300", shapeFill: "bg-white" };
   const libFill = isDarkMode ? '#333333' : '#ffffff';
   const libStroke = isDarkMode ? '#cccccc' : '#1e293b';
-
   const toggleShapeMenu = (category: string) => setOpenShapeMenus(prev => ({ ...prev, [category]: !prev[category] }));
   
   const handleMouseMove = useCallback((e: MouseEvent) => { 
@@ -1075,6 +1169,18 @@ const IDEPageContent = () => {
         </div>
         <div className={`flex-1 max-w-md mx-4 ${theme.searchBg} rounded-md h-6 flex items-center px-2 justify-center border ${theme.searchBorder} cursor-pointer ${theme.hover} transition`}><Search size={14} className={`mr-2 ${theme.textMuted}`} /><span className={`text-xs ${theme.textMuted}`}>ba-ide-mvp</span></div>
         <div className="flex items-center gap-1">
+          {currentUser ? (
+            <div className="flex items-center gap-1 mr-1">
+              <span className={`text-xs hidden md:block ${theme.textMuted}`}>{currentUser.email}</span>
+              <button onClick={handleLogout} className={`p-1 rounded transition ${theme.hover}`} title="Logout">
+                <LogOut size={16} />
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => setAuthModal('login')} className={`p-1 mr-1 rounded transition ${theme.hover}`} title="Login / Register">
+              <LogIn size={16} />
+            </button>
+          )}
           <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-1 mr-2 rounded transition ${theme.hover}`} title="Toggle Theme">{isDarkMode ? <Sun size={16} className="text-yellow-400" /> : <Moon size={16} className="text-slate-600" />}</button>
           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={`p-1 rounded transition ${isSidebarOpen ? (isDarkMode ? 'bg-[#333333] text-white' : 'bg-[#e4e4e4] text-black') : theme.hover}`} title="Toggle Primary Side Bar"><PanelLeft size={16} /></button>
           <button onClick={() => setIsTerminalOpen(!isTerminalOpen)} className={`p-1 rounded transition ${isTerminalOpen ? (isDarkMode ? 'bg-[#333333] text-white' : 'bg-[#e4e4e4] text-black') : theme.hover}`} title="Toggle Terminal"><PanelBottom size={16} /></button>
@@ -1089,6 +1195,19 @@ const IDEPageContent = () => {
             <div className="flex flex-col text-[13px] mt-1">
               <div className={`flex items-center gap-1 px-2 py-1 cursor-pointer ${theme.itemHover} transition`}><ChevronDown size={14} /> <Folder size={14} className="text-blue-400" /> <span className="font-semibold">BA_WORKSPACE</span></div>
               <div onClick={() => setIsTabOpen(true)} className={`flex items-center gap-1 pl-6 pr-2 py-1 cursor-pointer ${isTabOpen ? theme.itemActive : theme.itemHover} ${isDarkMode && isTabOpen ? 'border-l-2 border-blue-500' : ''}`}><FileCode size={14} className="text-yellow-400" /> <span className={isDarkMode ? 'text-white' : 'font-medium'}>diagram.mmd</span></div>
+              {authToken && diagramList.map(d => (
+                <div
+                  key={d.id}
+                  onClick={() => handleLoadDiagram(d.id)}
+                  className={`flex items-center gap-1 pl-6 pr-2 py-1 cursor-pointer ${currentDiagramId === d.id ? theme.itemActive : theme.itemHover} transition text-[13px]`}
+                >
+                  <FileIcon size={14} className="text-slate-400 shrink-0" />
+                  <span className="truncate">{d.title}</span>
+                </div>
+              ))}
+              {!authToken && (
+                <div className={`pl-6 pr-2 py-1 text-xs ${theme.textMuted} italic`}>Login to see saved diagrams</div>
+              )}
             </div>
           </div>
         )}
@@ -1145,11 +1264,21 @@ const IDEPageContent = () => {
               <button onClick={handleAutoLayout} className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-full transition" title="Auto Layout Diagram">
                 <Wand2 size={14} /> <span className="hidden xl:inline">Auto Layout</span>
               </button>
-              
+
               {/* ART MODE TOGGLE */}
               <div className="w-px h-5 bg-slate-300 mx-1"></div>
               <button onClick={() => setIsDrawingMode(!isDrawingMode)} className={`flex items-center gap-1.5 px-3 py-1 text-sm font-medium rounded-full transition ${isDrawingMode ? 'bg-purple-100 text-purple-700' : 'text-slate-700 hover:text-blue-600 hover:bg-blue-50'}`} title="Art Mode (Freehand Drawing)">
                 {isDrawingMode ? <Eraser size={14} /> : <PenTool size={14} />} <span className="hidden xl:inline">{isDrawingMode ? 'Exit Art Mode' : 'Art Mode'}</span>
+              </button>
+              <div className="w-px h-5 bg-slate-300 mx-1"></div>
+              <button onClick={handleSave} className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-slate-700 hover:text-green-600 hover:bg-green-50 rounded-full transition" title="Save">
+                <Save size={14} /> <span className="hidden xl:inline">Save</span>
+              </button>
+              <button onClick={handleShare} className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-full transition" title="Share">
+                <Share2 size={14} /> <span className="hidden xl:inline">Share</span>
+              </button>
+              <button onClick={() => handleExport('svg')} className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-slate-700 hover:text-purple-600 hover:bg-purple-50 rounded-full transition" title="Export SVG">
+                <FileDown size={14} /> <span className="hidden xl:inline">Export</span>
               </button>
             </div>
 
@@ -1269,6 +1398,70 @@ const IDEPageContent = () => {
           </div>
         )}
       </div>
+        {/* Auth Modal */}
+        {authModal && (
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60" onClick={() => setAuthModal(null)}>
+            <div className="bg-white rounded-xl shadow-2xl p-6 w-80" onClick={e => e.stopPropagation()}>
+              <h2 className="text-lg font-bold text-slate-800 mb-4">
+                {authModal === 'login' ? 'Sign In' : 'Create Account'}
+              </h2>
+              {authError && <p className="text-red-500 text-sm mb-3">{authError}</p>}
+              <input
+                type="email"
+                placeholder="Email"
+                value={authEmail}
+                onChange={e => setAuthEmail(e.target.value)}
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-2 outline-none focus:ring-2 focus:ring-blue-400 text-slate-800"
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={authPassword}
+                onChange={e => setAuthPassword(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleAuth(authModal)}
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-4 outline-none focus:ring-2 focus:ring-blue-400 text-slate-800"
+              />
+              <button
+                onClick={() => handleAuth(authModal)}
+                className="w-full bg-blue-600 text-white rounded-lg py-2 text-sm font-medium hover:bg-blue-700 transition mb-2"
+              >
+                {authModal === 'login' ? 'Sign In' : 'Register'}
+              </button>
+              <button
+                onClick={() => setAuthModal(authModal === 'login' ? 'register' : 'login')}
+                className="w-full text-blue-600 text-sm hover:underline"
+              >
+                {authModal === 'login' ? "Don't have an account? Register" : 'Already have an account? Sign in'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Share Modal */}
+        {shareModal && (
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60" onClick={() => setShareModal(null)}>
+            <div className="bg-white rounded-xl shadow-2xl p-6 w-80" onClick={e => e.stopPropagation()}>
+              <h2 className="text-lg font-bold text-slate-800 mb-2">Share Diagram</h2>
+              <p className="text-sm text-slate-500 mb-3">Anyone with this link can view the diagram.</p>
+              <div className="flex gap-2">
+                <input
+                  readOnly
+                  value={window.location.origin + shareModal.url}
+                  className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none text-slate-700 bg-slate-50"
+                />
+                <button
+                  onClick={() => navigator.clipboard.writeText(window.location.origin + shareModal.url)}
+                  className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition"
+                >
+                  Copy
+                </button>
+              </div>
+              <button onClick={() => setShareModal(null)} className="mt-3 w-full text-slate-500 text-sm hover:underline">
+                Close
+              </button>
+            </div>
+          </div>
+        )}
     </div>
   );
 };

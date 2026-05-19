@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+.next/
+out/
+
+# Environment — never commit secrets
+.env
+.env.*
+!.env.example
+
+# Dev sandbox / Nix
+.sandbox/
+.direnv/
+.envrc
+flake.nix
+flake.lock
+
+# Platform tools (not needed by co-workers)
+.omc/
+.specify/
+
+# Rust build artifacts (backend/)
+backend/target/
+backend/*.db
+backend/data/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/settings.json
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
