@@ -560,7 +560,7 @@ const SHAPE_CATEGORIES = ["Custom", "General", "Flowchart"];
 const LandingPage = ({ onStart }: { onStart: (e: React.MouseEvent<HTMLButtonElement>) => void }) => {
   const [stage, setStage] = useState(0);
   const [descText, setDescText] = useState('');
-  const fullDesc = "Visually edit diagrams and compile to Mermaid code & vice versa.";
+  const fullDesc = " What if diagrams now can code?";
   
   useEffect(() => {
     setTimeout(() => setStage(1), 500); 
@@ -633,6 +633,60 @@ const LandingPage = ({ onStart }: { onStart: (e: React.MouseEvent<HTMLButtonElem
 };
 
 
+// --- NOTEPAD-STYLE EDITOR COMPONENT ---
+const NotepadEditor = ({ file, onChange, isDarkMode }: { file: any, onChange: (val: string) => void, isDarkMode: boolean }) => {
+  const [cursorPos, setCursorPos] = useState({ line: 1, col: 1 });
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    onChange(e.target.value);
+    updateCursorPos(e);
+  };
+
+  const updateCursorPos = (e: any) => {
+    const text = e.target.value;
+    const selStart = e.target.selectionStart;
+    const linesBefore = text.substring(0, selStart).split('\n');
+    setCursorPos({
+      line: linesBefore.length,
+      col: linesBefore[linesBefore.length - 1].length + 1
+    });
+  };
+
+  const notepadBg = isDarkMode ? "bg-[#181818] text-[#d4d4d4]" : "bg-[#fdfdfd] text-[#1e1e1e]";
+  const borderCol = isDarkMode ? "border-[#2d2d2d]" : "border-slate-200";
+  const statusBg = isDarkMode ? "bg-[#1e1e1e] text-[#858585]" : "bg-[#f3f3f3] text-[#606060]";
+
+  return (
+    <div className={`flex flex-col h-full w-full font-mono ${notepadBg}`}>
+      <textarea
+        ref={textareaRef}
+        value={file.content}
+        onChange={handleTextareaChange}
+        onKeyUp={updateCursorPos}
+        onSelect={updateCursorPos}
+        onMouseUp={updateCursorPos}
+        className="flex-1 w-full h-full p-4 resize-none outline-none overflow-y-auto leading-relaxed border-none text-[15px]"
+        style={{
+          fontFamily: "Consolas, 'Courier New', Courier, monospace",
+          whiteSpace: "pre",
+          tabSize: 4
+        }}
+        placeholder="Type your notes here... Just like in Notepad."
+      />
+      <div className={`h-6 border-t ${borderCol} ${statusBg} flex items-center justify-between px-4 text-xs select-none shrink-0`}>
+        <div></div>
+        <div className="flex gap-6">
+          <span>Ln {cursorPos.line}, Col {cursorPos.col}</span>
+          <span>100%</span>
+          <span>Windows (CRLF)</span>
+          <span>UTF-8</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- NỘI DUNG IDE CHÍNH ---
 const IDEPageContent = () => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
@@ -642,6 +696,11 @@ const IDEPageContent = () => {
   
   const { screenToFlowPosition } = useReactFlow();
 
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
+  const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const transform = useStore((state) => state.transform);
+
   const [showLanding, setShowLanding] = useState(true);
   const [holePos, setHolePos] = useState({ x: 0, y: 0 });
   const [isAnimatingOut, setIsAnimatingOut] = useState(false);
@@ -649,7 +708,6 @@ const IDEPageContent = () => {
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState<boolean>(true);
-  const [isTabOpen, setIsTabOpen] = useState<boolean>(true);
   const [isTerminalOpen, setIsTerminalOpen] = useState<boolean>(false); 
   const [isMiniMapOpen, setIsMiniMapOpen] = useState<boolean>(true);
   const [isMiniMapHovered, setIsMiniMapHovered] = useState<boolean>(false);
@@ -675,11 +733,735 @@ const IDEPageContent = () => {
   const [hoveredShape, setHoveredShape] = useState<{ x: number, y: number, item: any } | null>(null);
   const hoverTimeout = useRef<any>(null);
 
-  const [code, setCode] = useState<string>("graph TD;\n    KH[\"Customer\"] %% shape:actor x:100 y:100 w:80 h:80 rot:0\n    BA[\"Business Analyst\"] %% shape:rectangle x:300 y:250 w:120 h:40 rot:0\n\n    KH -->|Send Request| BA;\n");
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [edges, setEdges] = useState<Edge[]>([]);
-  const [zoomLevel, setZoomLevel] = useState<number>(1);
-  const transform = useStore((state) => state.transform);
+  interface VirtualFile {
+    name: string;
+    content: string;
+    type: 'diagram' | 'text';
+  }
+
+  const [files, setFiles] = useState<VirtualFile[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('dm_virtual_files');
+      if (saved) {
+        try { return JSON.parse(saved); } catch (e) {}
+      }
+    }
+    return [
+      {
+        name: "diagram.mmd",
+        content: "graph TD;\n    KH[\"Customer\"] %% shape:actor x:100 y:100 w:80 h:80 rot:0\n    BA[\"Business Analyst\"] %% shape:rectangle x:300 y:250 w:120 h:40 rot:0\n\n    KH -->|Send Request| BA;\n",
+        type: "diagram"
+      }
+    ];
+  });
+
+  const [activeFileName, setActiveFileName] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('dm_active_file');
+      if (saved) return saved;
+    }
+    return "diagram.mmd";
+  });
+
+  const [openFiles, setOpenFiles] = useState<string[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('dm_open_files');
+      if (saved) {
+        try { return JSON.parse(saved); } catch (e) {}
+      }
+    }
+    return ["diagram.mmd"];
+  });
+
+  const [toast, setToast] = useState<{ message: string; visible: boolean }>({ message: "", visible: false });
+  const toastTimeoutRef = useRef<any>(null);
+
+  const showToast = useCallback((msg: string) => {
+    clearTimeout(toastTimeoutRef.current);
+    setToast({ message: msg, visible: true });
+    toastTimeoutRef.current = setTimeout(() => {
+      setToast(prev => ({ ...prev, visible: false }));
+    }, 3000);
+  }, []);
+
+  const [isFileMenuOpen, setIsFileMenuOpen] = useState(false);
+  const [isExportSubmenuOpen, setIsExportSubmenuOpen] = useState(false);
+  const fileMenuRef = useRef<HTMLDivElement>(null);
+  const exportItemRef = useRef<HTMLDivElement>(null);
+
+  const [code, setCode] = useState<string>(() => {
+    const active = files.find(f => f.name === activeFileName);
+    return active ? active.content : "";
+  });
+
+  useEffect(() => {
+    localStorage.setItem('dm_virtual_files', JSON.stringify(files));
+  }, [files]);
+
+  useEffect(() => {
+    localStorage.setItem('dm_active_file', activeFileName);
+  }, [activeFileName]);
+
+  useEffect(() => {
+    localStorage.setItem('dm_open_files', JSON.stringify(openFiles));
+  }, [openFiles]);
+
+  const updateActiveFileContent = useCallback((newContent: string) => {
+    setFiles(prev => prev.map(f => f.name === activeFileName ? { ...f, content: newContent } : f));
+  }, [activeFileName]);
+
+  const handleCodeChange = useCallback((newContent: string) => {
+    setCode(newContent);
+    updateActiveFileContent(newContent);
+  }, [updateActiveFileContent]);
+
+  const handleOpenFile = useCallback((fileName: string) => {
+    setFiles(currentFiles => {
+      const file = currentFiles.find(f => f.name === fileName);
+      if (!file) return currentFiles;
+      setActiveFileName(fileName);
+      setOpenFiles(prev => prev.includes(fileName) ? prev : [...prev, fileName]);
+      setCode(file.content);
+      
+      if (file.type === 'diagram') {
+        try {
+          const parsed = parseMermaid(file.content);
+          setNodes(parsed.nodes);
+          setEdges(parsed.edges);
+          setParseError(null);
+        } catch (e: any) {
+          setParseError(e);
+        }
+      }
+      return currentFiles;
+    });
+  }, []);
+
+  const handleCloseFile = useCallback((fileName: string) => {
+    setOpenFiles(prev => {
+      const nextOpen = prev.filter(name => name !== fileName);
+      if (activeFileName === fileName) {
+        if (nextOpen.length > 0) {
+          const newActive = nextOpen[nextOpen.length - 1];
+          setTimeout(() => {
+            setFiles(currentFiles => {
+              const file = currentFiles.find(f => f.name === newActive);
+              if (file) {
+                setActiveFileName(newActive);
+                setCode(file.content);
+                if (file.type === 'diagram') {
+                  try {
+                    const parsed = parseMermaid(file.content);
+                    setNodes(parsed.nodes);
+                    setEdges(parsed.edges);
+                    setParseError(null);
+                  } catch (e: any) {
+                    setParseError(e);
+                  }
+                }
+              }
+              return currentFiles;
+            });
+          }, 0);
+        } else {
+          setActiveFileName("");
+        }
+      }
+      return nextOpen;
+    });
+  }, [activeFileName]);
+
+  const handleNewFile = useCallback(() => {
+    const name = prompt("Enter filename for the new diagram:", "untitled.mmd");
+    if (!name) return;
+    let finalName = name.trim();
+    if (!finalName.includes('.')) {
+      finalName += '.mmd';
+    }
+    
+    setFiles(currentFiles => {
+      if (currentFiles.some(f => f.name.toLowerCase() === finalName.toLowerCase())) {
+        alert("File already exists!");
+        return currentFiles;
+      }
+      
+      const isText = finalName.endsWith('.txt');
+      const newFile: VirtualFile = {
+        name: finalName,
+        content: isText ? "" : "graph TD;\n    A --> B;",
+        type: isText ? 'text' : 'diagram'
+      };
+      
+      setTimeout(() => handleOpenFile(finalName), 0);
+      showToast(`Created file ${finalName}`);
+      return [...currentFiles, newFile];
+    });
+  }, [handleOpenFile, showToast]);
+
+  const handleNewTextFile = useCallback(() => {
+    const name = prompt("Enter filename for the new text file:", "notes.txt");
+    if (!name) return;
+    let finalName = name.trim();
+    if (!finalName.includes('.')) {
+      finalName += '.txt';
+    }
+    
+    setFiles(currentFiles => {
+      if (currentFiles.some(f => f.name.toLowerCase() === finalName.toLowerCase())) {
+        alert("File already exists!");
+        return currentFiles;
+      }
+      
+      const isText = finalName.endsWith('.txt');
+      const newFile: VirtualFile = {
+        name: finalName,
+        content: "",
+        type: isText ? 'text' : 'diagram'
+      };
+      
+      setTimeout(() => handleOpenFile(finalName), 0);
+      showToast(`Created text file ${finalName}`);
+      return [...currentFiles, newFile];
+    });
+  }, [handleOpenFile, showToast]);
+
+  const handleSaveFile = useCallback(() => {
+    if (!activeFileName) {
+      showToast("No active file to save!");
+      return;
+    }
+    setFiles(prev => prev.map(f => {
+      if (f.name === activeFileName) {
+        return { ...f, content: code };
+      }
+      return f;
+    }));
+    showToast(`Saved ${activeFileName} successfully!`);
+  }, [activeFileName, code, showToast]);
+
+  const triggerDownload = (filename: string, content: string, mimeType: string) => {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const escapeXml = (str: string) => {
+    return str.replace(/[<>&'"]/g, (c) => {
+      switch (c) {
+        case '<': return '&lt;';
+        case '>': return '&gt;';
+        case '&': return '&amp;';
+        case '\'': return '&apos;';
+        case '"': return '&quot;';
+        default: return c;
+      }
+    });
+  };
+
+  const renderNodeToSVG = (node: any) => {
+    const x = node.position.x;
+    const y = node.position.y;
+    const w = node.style?.width || node.width || 120;
+    const h = node.style?.height || node.height || 40;
+    const label = node.data.label || "";
+    const shape = node.data.shapeType || "rectangle";
+    const rot = node.data.rotation || 0;
+    const img = node.data.imageUrl;
+    
+    const transform = `transform="translate(${x}, ${y}) rotate(${rot}, ${w/2}, ${h/2})"`;
+    
+    let shapeSvg = "";
+    const fill = "#ffffff";
+    const stroke = "#1e293b";
+    const strokeW = 2;
+    
+    if (shape === 'rectangle' || shape === 'square') {
+      shapeSvg = `<rect x="0" y="0" width="${w}" height="${h}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" rx="4" />`;
+    } else if (shape === 'rounded' || shape === 'terminator') {
+      const rx = shape === 'terminator' ? h/2 : 10;
+      shapeSvg = `<rect x="0" y="0" width="${w}" height="${h}" rx="${rx}" ry="${rx}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" />`;
+    } else if (shape === 'circle') {
+      const r = Math.min(w, h) / 2;
+      shapeSvg = `<circle cx="${w/2}" cy="${h/2}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" />`;
+    } else if (shape === 'ellipse') {
+      shapeSvg = `<ellipse cx="${w/2}" cy="${h/2}" rx="${w/2}" ry="${h/2}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" />`;
+    } else if (shape === 'diamond') {
+      shapeSvg = `<polygon points="${w/2},0 ${w},${h/2} ${w/2},${h} 0,${h/2}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" />`;
+    } else if (shape === 'parallelogram') {
+      shapeSvg = `<polygon points="${w*0.15},0 ${w},0 ${w*0.85},${h} 0,${h}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" />`;
+    } else if (shape === 'hexagon') {
+      shapeSvg = `<polygon points="${w*0.15},0 ${w*0.85},0 ${w},${h/2} ${w*0.85},${h} ${w*0.15},${h} 0,${h/2}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" />`;
+    } else if (shape === 'triangle' || shape === 'extract') {
+      shapeSvg = `<polygon points="${w/2},0 ${w},${h} 0,${h}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" />`;
+    } else if (shape === 'merge') {
+      shapeSvg = `<polygon points="0,0 ${w},0 ${w/2},${h}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" />`;
+    } else if (shape === 'cylinder') {
+      shapeSvg = `
+        <path d="M 0 ${h*0.15} C 0 0, ${w} 0, ${w} ${h*0.15} L ${w} ${h*0.85} C ${w} ${h}, 0 ${h}, 0 ${h*0.85} Z" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" />
+        <path d="M 0 ${h*0.15} C 0 ${h*0.3}, ${w} ${h*0.3}, ${w} ${h*0.15}" fill="none" stroke="${stroke}" stroke-width="${strokeW}" />
+      `;
+    } else if (shape === 'image' && img) {
+      const displayUrl = img.startsWith('custom_') ? (globalImageRegistry[img] || '') : img;
+      shapeSvg = `<image href="${displayUrl}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet" />`;
+    } else if (shape === 'text') {
+      shapeSvg = "";
+    } else {
+      shapeSvg = `<rect x="0" y="0" width="${w}" height="${h}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" rx="4" />`;
+    }
+    
+    const textSvg = label ? `<text x="${w/2}" y="${h/2 + 4}" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="500" text-anchor="middle" fill="#0f172a">${escapeXml(label)}</text>` : "";
+    
+    return `
+      <g ${transform}>
+        ${shapeSvg}
+        ${textSvg}
+      </g>
+    `;
+  };
+
+  const generateSVGString = () => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    nodes.forEach(node => {
+      const x = node.position.x;
+      const y = node.position.y;
+      const w = node.style?.width as number || node.width || 120;
+      const h = node.style?.height as number || node.height || 40;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x + w > maxX) maxX = x + w;
+      if (y + h > maxY) maxY = y + h;
+    });
+    
+    if (nodes.length === 0) {
+      minX = 0; minY = 0; maxX = 400; maxY = 300;
+    }
+    
+    const padding = 50;
+    minX -= padding;
+    minY -= padding;
+    maxX += padding;
+    maxY += padding;
+    const width = maxX - minX;
+    const height = maxY - minY;
+    
+    let nodesSvg = "";
+    nodes.forEach(node => {
+      if (node.type === 'drawNode') {
+        const { points, color, width: pWidth, penStyle } = node.data;
+        const d = points && points.length > 0 ? `M ${points[0].x} ${points[0].y} ` + points.map((p:any) => `L ${p.x} ${p.y}`).join(' ') : '';
+        const strokeDash = penStyle === 'dashed' ? 'stroke-dasharray="8 8"' : penStyle === 'dotted' ? 'stroke-dasharray="2 4"' : '';
+        const opacity = penStyle === 'highlighter' ? 'opacity="0.4"' : 'opacity="1"';
+        const actualWidth = penStyle === 'highlighter' ? pWidth * 3 : pWidth;
+        
+        nodesSvg += `
+          <g transform="translate(${node.position.x}, ${node.position.y})">
+            <path d="${d}" fill="none" stroke="${color}" stroke-width="${actualWidth}" ${strokeDash} ${opacity} stroke-linecap="round" stroke-linejoin="round" />
+          </g>
+        `;
+      } else {
+        nodesSvg += renderNodeToSVG(node);
+      }
+    });
+    
+    let edgesSvg = "";
+    edges.forEach(edge => {
+      const sourceNode = nodes.find(n => n.id === edge.source);
+      const targetNode = nodes.find(n => n.id === edge.target);
+      if (!sourceNode || !targetNode) return;
+      
+      const sW = sourceNode.style?.width as number || sourceNode.width || 120;
+      const sH = sourceNode.style?.height as number || sourceNode.height || 40;
+      const tW = targetNode.style?.width as number || targetNode.width || 120;
+      const tH = targetNode.style?.height as number || targetNode.height || 40;
+      
+      const sCenterX = sourceNode.position.x + sW / 2;
+      const sCenterY = sourceNode.position.y + sH / 2;
+      const tCenterX = targetNode.position.x + tW / 2;
+      const tCenterY = targetNode.position.y + tH / 2;
+      
+      const dx = tCenterX - sCenterX;
+      const dy = tCenterY - sCenterY;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      
+      const sourceX = sCenterX + (dx / dist) * (sW / 2);
+      const sourceY = sCenterY + (dy / dist) * (sH / 2);
+      const targetX = tCenterX - (dx / dist) * (tW / 2 + 8);
+      const targetY = tCenterY - (dy / dist) * (tH / 2 + 8);
+      
+      const dPath = `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+      const labelX = (sourceX + targetX) / 2;
+      const labelY = (sourceY + targetY) / 2;
+      
+      const edgeLabelSvg = edge.label ? `
+        <g transform="translate(${labelX}, ${labelY - 10})">
+          <rect x="-30" y="-8" width="60" height="16" fill="#ffffff" rx="3" />
+          <text font-family="sans-serif" font-size="10" text-anchor="middle" dominant-baseline="middle" fill="#334155">${escapeXml(String(edge.label))}</text>
+        </g>
+      ` : "";
+      
+      const markerStart = edge.data?.bidirectional ? 'marker-start="url(#arrow-start)"' : '';
+      
+      edgesSvg += `
+        <g>
+          <path d="${dPath}" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow-end)" ${markerStart} />
+          ${edgeLabelSvg}
+        </g>
+      `;
+    });
+    
+    const base64Code = btoa(unescape(encodeURIComponent(code)));
+    
+    return `<?xml version="1.0" standalone="no"?>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${width} ${height}" width="${width}" height="${height}">
+        <desc id="mermaid-code">${base64Code}</desc>
+        <defs>
+          <marker id="arrow-end" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" />
+          </marker>
+          <marker id="arrow-start" viewBox="0 0 10 10" refX="4" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 10 0 L 0 5 L 10 10 z" fill="#64748b" />
+          </marker>
+        </defs>
+        <rect x="${minX}" y="${minY}" width="${width}" height="${height}" fill="#ffffff" />
+        <g>
+          ${nodesSvg}
+          ${edgesSvg}
+        </g>
+      </svg>
+    `;
+  };
+
+  const generateXMLString = () => {
+    let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+    xml += '<diagram app="DreamMaidIDE">\n';
+    
+    xml += '  <nodes>\n';
+    nodes.forEach(n => {
+      if (n.type === 'drawNode') {
+        const pointsStr = n.data.points.map((p: any) => `${p.x},${p.y}`).join(' ');
+        xml += `    <drawNode id="${n.id}" x="${n.position.x}" y="${n.position.y}" width="${n.style?.width}" height="${n.style?.height}" color="${n.data.color}" pWidth="${n.data.width}" penStyle="${n.data.penStyle}" points="${pointsStr}" />\n`;
+      } else {
+        xml += `    <node id="${n.id}" x="${n.position.x}" y="${n.position.y}" width="${n.style?.width || 120}" height="${n.style?.height || 40}" label="${escapeXml(n.data.label || '')}" shape="${n.data.shapeType || 'rectangle'}" rotation="${n.data.rotation || 0}" img="${n.data.imageUrl || ''}" />\n`;
+      }
+    });
+    xml += '  </nodes>\n';
+    
+    xml += '  <edges>\n';
+    edges.forEach(e => {
+      xml += `    <edge id="${e.id}" source="${e.source}" target="${e.target}" label="${escapeXml(String(e.label || ''))}" bidirectional="${e.data?.bidirectional || false}" />\n`;
+    });
+    xml += '  </edges>\n';
+    
+    xml += '  <mermaid><![CDATA[' + code + ']]></mermaid>\n';
+    
+    xml += '</diagram>';
+    return xml;
+  };
+
+  const handleExportXML = () => {
+    const xmlContent = generateXMLString();
+    const baseName = activeFileName ? activeFileName.split('.')[0] : 'diagram';
+    triggerDownload(`${baseName}.xml`, xmlContent, 'text/xml');
+    showToast(`Exported ${baseName}.xml`);
+  };
+
+  const handleExportSVG = () => {
+    const svgContent = generateSVGString();
+    const baseName = activeFileName ? activeFileName.split('.')[0] : 'diagram';
+    triggerDownload(`${baseName}.svg`, svgContent, 'image/svg+xml');
+    showToast(`Exported ${baseName}.svg`);
+  };
+
+  const handleExportImage = (format: 'jpg' | 'jpeg') => {
+    const svgContent = generateSVGString();
+    const baseName = activeFileName ? activeFileName.split('.')[0] : 'diagram';
+    
+    const svgBlob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    
+    const img = new Image();
+    img.onload = () => {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      nodes.forEach(node => {
+        const x = node.position.x;
+        const y = node.position.y;
+        const w = node.style?.width as number || node.width || 120;
+        const h = node.style?.height as number || node.height || 40;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x + w > maxX) maxX = x + w;
+        if (y + h > maxY) maxY = y + h;
+      });
+      
+      if (nodes.length === 0) {
+        minX = 0; minY = 0; maxX = 400; maxY = 300;
+      }
+      
+      const padding = 50;
+      const width = maxX - minX + padding * 2;
+      const height = maxY - minY + padding * 2;
+      
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0);
+        
+        const imgUrl = canvas.toDataURL('image/jpeg', 0.95);
+        const a = document.createElement('a');
+        a.href = imgUrl;
+        a.download = `${baseName}.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+      URL.revokeObjectURL(url);
+      showToast(`Exported ${baseName}.${format}`);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      alert("Export failed: SVG contains unsupported resources (like base64 custom shapes). Export to SVG or XML instead!");
+    };
+    img.src = url;
+  };
+
+  const importFileInputRef = useRef<HTMLInputElement>(null);
+  const uploadFileInputRef = useRef<HTMLInputElement>(null);
+
+  const triggerImport = () => {
+    importFileInputRef.current?.click();
+  };
+
+  const triggerUpload = () => {
+    uploadFileInputRef.current?.click();
+  };
+
+  const handleUploadFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      
+      let finalName = file.name;
+      let counter = 1;
+      const ext = finalName.includes('.') ? finalName.split('.').pop() : 'mmd';
+      const base = finalName.includes('.') ? finalName.substring(0, finalName.lastIndexOf('.')) : finalName;
+      
+      setFiles(currentFiles => {
+        while (currentFiles.some(f => f.name.toLowerCase() === finalName.toLowerCase())) {
+          finalName = `${base}_${counter}.${ext}`;
+          counter++;
+        }
+        
+        const isText = finalName.endsWith('.txt');
+        const newFile: VirtualFile = {
+          name: finalName,
+          content: text,
+          type: isText ? 'text' : 'diagram'
+        };
+        
+        setTimeout(() => handleOpenFile(finalName), 0);
+        showToast(`Uploaded ${file.name} as ${finalName}`);
+        return [...currentFiles, newFile];
+      });
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    const fileType = file.name.split('.').pop()?.toLowerCase();
+    
+    if (['jpg', 'jpeg', 'png'].includes(fileType || '')) {
+      reader.onload = (event) => {
+        const base64 = event.target?.result as string;
+        const imgId = `custom_${Date.now()}`;
+        globalImageRegistry[imgId] = base64;
+        
+        const centerPosition = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+        addNodeToCanvas('image', file.name.split('.')[0].substring(0, 15), centerPosition, imgId);
+        showToast(`Imported image as node: ${file.name}`);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      reader.onload = (event) => {
+        const text = event.target?.result as string;
+        
+        if (fileType === 'xml') {
+          try {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(text, "text/xml");
+            
+            const diagramNode = xmlDoc.querySelector("diagram");
+            if (!diagramNode) throw new Error("Not a valid DreamMaid XML diagram.");
+            
+            const importedNodes: Node[] = [];
+            xmlDoc.querySelectorAll("node").forEach(nodeEl => {
+              const id = nodeEl.getAttribute("id") || `node_${Date.now()}`;
+              const x = parseFloat(nodeEl.getAttribute("x") || "0");
+              const y = parseFloat(nodeEl.getAttribute("y") || "0");
+              const width = parseFloat(nodeEl.getAttribute("width") || "120");
+              const height = parseFloat(nodeEl.getAttribute("height") || "40");
+              const label = nodeEl.getAttribute("label") || "";
+              const shape = nodeEl.getAttribute("shape") || "rectangle";
+              const rotation = parseFloat(nodeEl.getAttribute("rotation") || "0");
+              const img = nodeEl.getAttribute("img") || undefined;
+              
+              importedNodes.push({
+                id,
+                type: 'customShape',
+                position: { x, y },
+                style: { width, height },
+                data: { label, shapeType: shape, rotation, imageUrl: img }
+              });
+            });
+            
+            xmlDoc.querySelectorAll("drawNode").forEach(nodeEl => {
+              const id = nodeEl.getAttribute("id") || `draw_${Date.now()}`;
+              const x = parseFloat(nodeEl.getAttribute("x") || "0");
+              const y = parseFloat(nodeEl.getAttribute("y") || "0");
+              const width = parseFloat(nodeEl.getAttribute("width") || "100");
+              const height = parseFloat(nodeEl.getAttribute("height") || "100");
+              const color = nodeEl.getAttribute("color") || "#3b82f6";
+              const pWidth = parseFloat(nodeEl.getAttribute("pWidth") || "3");
+              const penStyle = nodeEl.getAttribute("penStyle") || "solid";
+              const pointsStr = nodeEl.getAttribute("points") || "";
+              const points = pointsStr.split(' ').map(p => {
+                const parts = p.split(',');
+                return { x: parseFloat(parts[0] || "0"), y: parseFloat(parts[1] || "0") };
+              });
+              
+              importedNodes.push({
+                id,
+                type: 'drawNode',
+                position: { x, y },
+                style: { width, height },
+                data: { points, color, width: pWidth, penStyle, origW: width, origH: height, rotation: 0 }
+              });
+            });
+            
+            const importedEdges: Edge[] = [];
+            xmlDoc.querySelectorAll("edge").forEach((edgeEl, index) => {
+              const id = edgeEl.getAttribute("id") || `e_${index}_${Date.now()}`;
+              const source = edgeEl.getAttribute("source") || "";
+              const target = edgeEl.getAttribute("target") || "";
+              const label = edgeEl.getAttribute("label") || "";
+              const bidirectional = edgeEl.getAttribute("bidirectional") === "true";
+              
+              importedEdges.push({
+                id,
+                source,
+                target,
+                label: label || undefined,
+                type: 'smart',
+                markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20 },
+                markerStart: bidirectional ? { type: MarkerType.ArrowClosed, width: 20, height: 20 } : undefined,
+                data: { bidirectional }
+              });
+            });
+            
+            const mermaidNode = xmlDoc.querySelector("mermaid");
+            const mmdCode = mermaidNode?.textContent || generateMermaidFromFlow(importedNodes, importedEdges);
+            
+            setNodes(importedNodes);
+            setEdges(importedEdges);
+            setCode(mmdCode);
+            setFiles(prev => prev.map(f => f.name === activeFileName ? { ...f, content: mmdCode } : f));
+            setParseError(null);
+            showToast(`Imported diagram from XML: ${file.name}`);
+          } catch (e: any) {
+            alert(`Failed to parse XML: ${e.message}`);
+          }
+        } else if (fileType === 'svg') {
+          try {
+            const parser = new DOMParser();
+            const svgDoc = parser.parseFromString(text, "image/svg+xml");
+            
+            const descEl = svgDoc.getElementById("mermaid-code");
+            if (descEl && descEl.textContent) {
+              const rawCode = decodeURIComponent(escape(atob(descEl.textContent.trim())));
+              setCode(rawCode);
+              setFiles(prev => prev.map(f => f.name === activeFileName ? { ...f, content: rawCode } : f));
+              
+              const parsed = parseMermaid(rawCode);
+              setNodes(parsed.nodes);
+              setEdges(parsed.edges);
+              setParseError(null);
+              showToast(`Reconstructed diagram from SVG metadata!`);
+            } else {
+              const base64 = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(text)));
+              const imgId = `custom_${Date.now()}`;
+              globalImageRegistry[imgId] = base64;
+              
+              const centerPosition = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+              addNodeToCanvas('image', file.name.split('.')[0].substring(0, 15), centerPosition, imgId);
+              showToast(`Imported plain SVG as image node`);
+            }
+          } catch (e: any) {
+            alert(`Failed to parse SVG: ${e.message}`);
+          }
+        }
+      };
+      reader.readAsText(file);
+    }
+    
+    e.target.value = '';
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (showLanding) return;
+
+      if (e.ctrlKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        handleSaveFile();
+      } else if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        handleNewFile();
+      } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        handleNewTextFile();
+      } else if (e.ctrlKey && e.key.toLowerCase() === 'u') {
+        e.preventDefault();
+        triggerUpload();
+      } else if (e.ctrlKey && e.key.toLowerCase() === 'i') {
+        e.preventDefault();
+        triggerImport();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showLanding, files, activeFileName, code, nodes, edges, handleNewFile, handleNewTextFile, handleSaveFile]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (fileMenuRef.current && !fileMenuRef.current.contains(event.target as any)) {
+        setIsFileMenuOpen(false);
+        setIsExportSubmenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
 
   // ART MODE (DRAWING) STATE
   const [isDrawingMode, setIsDrawingMode] = useState<boolean>(false);
@@ -698,10 +1480,12 @@ const IDEPageContent = () => {
   }, [isDrawingMode, drawTool]);
 
   const updateCodeFromFlow = useCallback((currentNodes: Node[], currentEdges: Edge[]) => {
-    setCode(generateMermaidFromFlow(currentNodes, currentEdges));
+    const newCode = generateMermaidFromFlow(currentNodes, currentEdges);
+    setCode(newCode);
+    setFiles(prev => prev.map(f => f.name === activeFileName ? { ...f, content: newCode } : f));
     setParseError(null);
     if (monacoRef.current) monacoRef.current.monaco.editor.setModelMarkers(monacoRef.current.editor.getModel(), "mermaid", []);
-  }, []);
+  }, [activeFileName]);
 
   useEffect(() => {
     try {
@@ -1323,7 +2107,163 @@ const IDEPageContent = () => {
         <div className={`flex items-center justify-between h-10 px-3 ${theme.toolbar} border-b ${theme.border} text-sm select-none shrink-0`}>
           <div className="flex items-center gap-4">
             <Menu size={16} className={`cursor-pointer ${isDarkMode ? 'hover:text-white' : 'hover:text-black'}`} />
-            <div className="hidden md:flex gap-3 text-[13px]">{['File', 'Edit', 'Selection', 'View', 'Go', 'Run', 'Help'].map(item => (<span key={item} className={`cursor-pointer ${isDarkMode ? 'hover:text-white' : 'hover:text-black'}`}>{item}</span>))}</div>
+            <div className="hidden md:flex gap-3 text-[13px] relative z-[9999] items-center">
+              {/* FILE BUTTON & DROPDOWN */}
+              <div 
+                ref={fileMenuRef}
+                className="relative text-left"
+                onMouseEnter={() => setIsFileMenuOpen(true)}
+              >
+                <span 
+                  onClick={() => setIsFileMenuOpen(prev => !prev)}
+                  className={`px-2 py-1 rounded cursor-pointer transition select-none ${isFileMenuOpen ? (isDarkMode ? 'bg-[#3c3c3c] text-white' : 'bg-slate-200 text-black') : (isDarkMode ? 'hover:text-white hover:bg-[#2b2b2b]' : 'hover:text-black hover:bg-slate-100')}`}
+                >
+                  File
+                </span>
+                
+                {isFileMenuOpen && (
+                  <div 
+                    className={`absolute left-0 mt-1.5 w-64 rounded-md shadow-2xl border text-[13px] py-1 select-none flex flex-col z-[10000] ${isDarkMode ? 'bg-[#252526] border-[#3c3c3c] text-[#cccccc]' : 'bg-white border-slate-200 text-slate-800'}`}
+                    onMouseLeave={() => {
+                      setIsFileMenuOpen(false);
+                      setIsExportSubmenuOpen(false);
+                    }}
+                  >
+                    <button 
+                      onClick={() => {
+                        handleNewFile();
+                        setIsFileMenuOpen(false);
+                      }}
+                      className={`w-full text-left px-4 py-2 flex items-center justify-between transition ${isDarkMode ? 'hover:bg-[#094771] hover:text-white' : 'hover:bg-blue-600 hover:text-white'}`}
+                    >
+                      <span>New File...</span>
+                      <span className="text-[11px] opacity-60">Ctrl+Alt+N</span>
+                    </button>
+                    
+                    <button 
+                      onClick={() => {
+                        handleNewTextFile();
+                        setIsFileMenuOpen(false);
+                      }}
+                      className={`w-full text-left px-4 py-2 flex items-center justify-between transition ${isDarkMode ? 'hover:bg-[#094771] hover:text-white' : 'hover:bg-blue-600 hover:text-white'}`}
+                    >
+                      <span>New Text File</span>
+                      <span className="text-[11px] opacity-60">Ctrl+Shift+N</span>
+                    </button>
+                    
+                    <div className={`h-px my-1 ${isDarkMode ? 'bg-[#3c3c3c]' : 'bg-slate-200'}`} />
+                    
+                    <button 
+                      onClick={() => {
+                        handleSaveFile();
+                        setIsFileMenuOpen(false);
+                      }}
+                      className={`w-full text-left px-4 py-2 flex items-center justify-between transition ${isDarkMode ? 'hover:bg-[#094771] hover:text-white' : 'hover:bg-blue-600 hover:text-white'}`}
+                    >
+                      <span>Save</span>
+                      <span className="text-[11px] opacity-60">Ctrl+S</span>
+                    </button>
+                    
+                    <div className={`h-px my-1 ${isDarkMode ? 'bg-[#3c3c3c]' : 'bg-slate-200'}`} />
+                    
+                    <div 
+                      ref={exportItemRef}
+                      className="relative text-left"
+                      onMouseEnter={() => setIsExportSubmenuOpen(true)}
+                    >
+                      <div 
+                        className={`w-full text-left px-4 py-2 flex items-center justify-between cursor-pointer transition ${isExportSubmenuOpen ? (isDarkMode ? 'bg-[#094771] text-white' : 'bg-blue-600 text-white') : (isDarkMode ? 'hover:bg-[#094771] hover:text-white' : 'hover:bg-blue-600 hover:text-white')}`}
+                      >
+                        <span>Export</span>
+                        <ChevronRight size={14} className="opacity-80" />
+                      </div>
+                      
+                      {isExportSubmenuOpen && (
+                        <div 
+                          className={`export-submenu absolute left-full top-0 ml-0.5 w-40 rounded-md shadow-2xl border text-[13px] py-1 select-none flex flex-col z-[10001] ${isDarkMode ? 'bg-[#252526] border-[#3c3c3c] text-[#cccccc]' : 'bg-white border-slate-200 text-slate-800'}`}
+                          onMouseLeave={() => setIsExportSubmenuOpen(false)}
+                        >
+                          <button 
+                            onClick={() => {
+                              handleExportImage('jpg');
+                              setIsExportSubmenuOpen(false);
+                              setIsFileMenuOpen(false);
+                            }}
+                            className={`w-full text-left px-4 py-2 transition ${isDarkMode ? 'hover:bg-[#094771] hover:text-white' : 'hover:bg-blue-600 hover:text-white'}`}
+                          >
+                            JPG Image
+                          </button>
+                          <button 
+                            onClick={() => {
+                              handleExportImage('jpeg');
+                              setIsExportSubmenuOpen(false);
+                              setIsFileMenuOpen(false);
+                            }}
+                            className={`w-full text-left px-4 py-2 transition ${isDarkMode ? 'hover:bg-[#094771] hover:text-white' : 'hover:bg-blue-600 hover:text-white'}`}
+                          >
+                            JPEG Image
+                          </button>
+                          <button 
+                            onClick={() => {
+                              handleExportSVG();
+                              setIsExportSubmenuOpen(false);
+                              setIsFileMenuOpen(false);
+                            }}
+                            className={`w-full text-left px-4 py-2 transition ${isDarkMode ? 'hover:bg-[#094771] hover:text-white' : 'hover:bg-blue-600 hover:text-white'}`}
+                          >
+                            SVG Vector
+                          </button>
+                          <button 
+                            onClick={() => {
+                              handleExportXML();
+                              setIsExportSubmenuOpen(false);
+                              setIsFileMenuOpen(false);
+                            }}
+                            className={`w-full text-left px-4 py-2 transition ${isDarkMode ? 'hover:bg-[#094771] hover:text-white' : 'hover:bg-blue-600 hover:text-white'}`}
+                          >
+                            XML Schema
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className={`h-px my-1 ${isDarkMode ? 'bg-[#3c3c3c]' : 'bg-slate-200'}`} />
+                    
+                    <button 
+                      onClick={() => {
+                        triggerUpload();
+                        setIsFileMenuOpen(false);
+                      }}
+                      className={`w-full text-left px-4 py-2 flex items-center justify-between transition ${isDarkMode ? 'hover:bg-[#094771] hover:text-white' : 'hover:bg-blue-600 hover:text-white'}`}
+                    >
+                      <span>Upload (.mmd)...</span>
+                      <span className="text-[11px] opacity-60">Ctrl+U</span>
+                    </button>
+                    
+                    <button 
+                      onClick={() => {
+                        triggerImport();
+                        setIsFileMenuOpen(false);
+                      }}
+                      className={`w-full text-left px-4 py-2 flex items-center justify-between transition ${isDarkMode ? 'hover:bg-[#094771] hover:text-white' : 'hover:bg-blue-600 hover:text-white'}`}
+                    >
+                      <span>Import...</span>
+                      <span className="text-[11px] opacity-60">Ctrl+I</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+              
+              {/* STATIC MENUS */}
+              {['Edit', 'Selection', 'View', 'Go', 'Run', 'Help'].map(item => (
+                <span 
+                  key={item} 
+                  className={`px-2 py-1 rounded cursor-pointer transition select-none ${isDarkMode ? 'hover:text-white hover:bg-[#2b2b2b]' : 'hover:text-black hover:bg-slate-100'}`}
+                >
+                  {item}
+                </span>
+              ))}
+            </div>
           </div>
           <div className={`flex-1 max-w-md mx-4 ${theme.searchBg} rounded-md h-6 flex items-center px-2 justify-center border ${theme.searchBorder} cursor-pointer ${theme.hover} transition`}><Search size={14} className={`mr-2 ${theme.textMuted}`} /><span className={`text-xs ${theme.textMuted}`}>dream-maid-ide</span></div>
           <div className="flex items-center gap-1">
@@ -1341,7 +2281,38 @@ const IDEPageContent = () => {
               <div className={`flex items-center justify-between px-4 py-2 text-xs font-semibold uppercase tracking-wider ${theme.textMuted}`}><span>Explorer</span><MoreHorizontal size={14} className={`cursor-pointer ${isDarkMode ? 'hover:text-white' : 'hover:text-black'}`} /></div>
               <div className="flex flex-col text-[13px] mt-1">
                 <div className={`flex items-center gap-1 px-2 py-1 cursor-pointer ${theme.itemHover} transition`}><ChevronDown size={14} /> <Folder size={14} className="text-blue-400" /> <span className="font-semibold">DM_WORKSPACE</span></div>
-                <div onClick={() => setIsTabOpen(true)} className={`flex items-center gap-1 pl-6 pr-2 py-1 cursor-pointer ${isTabOpen ? theme.itemActive : theme.itemHover} ${isDarkMode && isTabOpen ? 'border-l-2 border-blue-500' : ''}`}><FileCode size={14} className="text-yellow-400" /> <span className={isDarkMode ? 'text-white' : 'font-medium'}>diagram.mmd</span></div>
+                {files.map(file => {
+                  const isActive = activeFileName === file.name && openFiles.includes(file.name);
+                  const Icon = file.type === 'text' ? FileText : FileCode;
+                  const iconColor = file.type === 'text' ? 'text-blue-400' : 'text-yellow-400';
+                  return (
+                    <div 
+                      key={file.name}
+                      onClick={() => handleOpenFile(file.name)} 
+                      className={`flex items-center justify-between group pl-6 pr-2 py-1 cursor-pointer ${isActive ? theme.itemActive : theme.itemHover} ${isDarkMode && isActive ? 'border-l-2 border-blue-500' : ''}`}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Icon size={14} className={iconColor} /> 
+                        <span className={`truncate ${isDarkMode ? (isActive ? 'text-white' : 'text-slate-300') : 'text-slate-700'}`}>{file.name}</span>
+                      </div>
+                      {file.name !== 'diagram.mmd' && (
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm(`Are you sure you want to delete ${file.name}?`)) {
+                              setFiles(prev => prev.filter(f => f.name !== file.name));
+                              handleCloseFile(file.name);
+                            }
+                          }}
+                          className="opacity-0 group-hover:opacity-100 hover:text-red-500 p-0.5 rounded transition-opacity"
+                          title="Delete File"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1350,20 +2321,64 @@ const IDEPageContent = () => {
           <div className="flex flex-1 overflow-hidden">
             {/* EDITOR */}
             <div style={{ width: editorWidth }} className="flex flex-col shrink-0 min-w-[200px] h-full overflow-hidden">
-              {isTabOpen ? (
+              {openFiles.length > 0 ? (
                 <div className="flex flex-col flex-1 overflow-hidden">
                   <div className={`flex items-center h-9 ${theme.bgMain} border-b ${theme.border} overflow-x-auto shrink-0`}>
-                    <div className={`flex items-center gap-2 px-3 py-1.5 ${theme.bgMain} border-t-2 ${theme.editorTabTop} text-[13px] cursor-pointer group`}>
-                      <FileCode size={14} className="text-yellow-400" /> <span className={isDarkMode ? 'text-white' : 'text-black'}>diagram.mmd</span>
-                      <div className="ml-1 p-[2px] rounded-sm opacity-0 group-hover:opacity-100 hover:bg-slate-500/30 transition-opacity" onClick={(e) => { e.stopPropagation(); setIsTabOpen(false); }} title="Close Tab"><X size={14} className={isDarkMode ? "text-slate-300 hover:text-white" : "text-slate-600 hover:text-black"} /></div>
+                    {openFiles.map(fileName => {
+                      const file = files.find(f => f.name === fileName);
+                      const isActive = activeFileName === fileName;
+                      const Icon = file?.type === 'text' ? FileText : FileCode;
+                      const iconColor = file?.type === 'text' ? 'text-blue-400' : 'text-yellow-400';
+                      return (
+                        <div 
+                          key={fileName}
+                          onClick={() => handleOpenFile(fileName)}
+                          className={`flex items-center gap-2 px-3 py-1.5 ${isActive ? theme.bgMain : 'opacity-60'} border-r ${theme.border} border-t-2 ${isActive ? theme.editorTabTop : 'border-t-transparent'} text-[13px] cursor-pointer group shrink-0`}
+                        >
+                          <Icon size={14} className={iconColor} /> 
+                          <span className={isDarkMode ? 'text-white' : 'text-black'}>{fileName}</span>
+                          <div 
+                            className="ml-1 p-[2px] rounded-sm opacity-0 group-hover:opacity-100 hover:bg-slate-500/30 transition-opacity" 
+                            onClick={(e) => { 
+                              e.stopPropagation(); 
+                              handleCloseFile(fileName); 
+                            }} 
+                            title="Close Tab"
+                          >
+                            <X size={12} className={isDarkMode ? "text-slate-300 hover:text-white" : "text-slate-600 hover:text-black"} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {activeFileName && (
+                    <div className={`flex-1 overflow-hidden ${theme.bgMain}`} onKeyDown={(e) => e.stopPropagation()}>
+                      {files.find(f => f.name === activeFileName)?.type === 'text' ? (
+                        <NotepadEditor 
+                          file={files.find(f => f.name === activeFileName)!} 
+                          onChange={(newVal) => handleCodeChange(newVal)}
+                          isDarkMode={isDarkMode}
+                        />
+                      ) : (
+                        <Editor 
+                          height="100%" 
+                          defaultLanguage="markdown" 
+                          theme={isDarkMode ? "vs-dark" : "light"} 
+                          value={code} 
+                          onChange={(val) => handleCodeChange(val || "")} 
+                          onMount={handleEditorDidMount} 
+                          options={{ minimap: { enabled: false }, fontSize: 14, wordWrap: "on", padding: { top: 16 } }} 
+                        />
+                      )}
                     </div>
-                  </div>
-                  <div className={`flex-1 overflow-hidden ${theme.bgMain}`} onKeyDown={(e) => e.stopPropagation()}>
-                    <Editor height="100%" defaultLanguage="markdown" theme={isDarkMode ? "vs-dark" : "light"} value={code} onChange={(val) => setCode(val || "")} onMount={handleEditorDidMount} options={{ minimap: { enabled: false }, fontSize: 14, wordWrap: "on", padding: { top: 16 } }} />
-                  </div>
+                  )}
                 </div>
               ) : (
-                <div className={`flex items-center justify-center flex-col flex-1 shrink-0 overflow-hidden ${theme.bgMain}`}><FileCode size={48} className={theme.textMuted} strokeWidth={1} /><p className={`mt-4 text-sm ${theme.textMuted}`}>No file is open</p><button onClick={() => setIsTabOpen(true)} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">Open diagram.mmd</button></div>
+                <div className={`flex items-center justify-center flex-col flex-1 shrink-0 overflow-hidden ${theme.bgMain}`}>
+                  <FileCode size={48} className={theme.textMuted} strokeWidth={1} />
+                  <p className={`mt-4 text-sm ${theme.textMuted}`}>No file is open</p>
+                  <button onClick={() => handleOpenFile('diagram.mmd')} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">Open diagram.mmd</button>
+                </div>
               )}
 
               {/* TERMINAL */}
